@@ -80,7 +80,7 @@ internal sealed class TouchInput
                 _lastY += s * _wheelStep;
                 _twoMoved = true;
                 var (cx, cy) = Display.ToClient(x, y);
-                WinMessages.PostMouse(WHELL, cx, cy, (nint)((s * 120) << 16));
+                WinMessages.PostMouse(WHEEL, cx, cy, (nint)((s * 120) << 16));
             }
         }
         else if (_mode == Mode.Pending && Math.Max(Math.Abs(x - _downX), Math.Abs(y - _downY)) > _slop)
