@@ -136,7 +136,7 @@ internal sealed unsafe class IosHost : IHost
     public IAudioSink OpenAudio(int sampleRate, int channels, int bitsPerSample)
     {
         if ((bitsPerSample != 8 && bitsPerSample != 16) || channels < 1 || channels > 2) return null;
-        return new EngineSink(sampleRate, channels, bitsPerSample);
+        return new AudioOut(sampleRate, channels, bitsPerSample);
     }
 
     sealed class EngineSink : IAudioSink
