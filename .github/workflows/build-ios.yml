@@ -7,31 +7,36 @@ defaults:
 
 jobs:
   build:
-    runs-on: macos-26
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 10.0.x
+          dotnet-version: 10.0.3xx
 
-      - name: Select Xcode 27
+      - name: Install iOS workload (pinned)
         run: |
-          ls -d /Applications/Xcode*.app
-          X=$(ls -d /Applications/Xcode_27*.app 2>/dev/null | sort -V | tail -1)
-          echo "Using: $X"
-          sudo xcode-select -s "$X"
-          xcodebuild -version
-
-      - name: Install iOS workload
-        run: dotnet workload install ios
+          dotnet --version
+          dotnet workload install ios --version 10.0.303.3
+          dotnet workload list
 
       - name: Build (no signing)
         run: |
-          dotnet build WogiOS/WogiOS.csproj -c Release \
-            -p:EnableCodeSigning=false \
-            -p:CodesignRequireProvisioningProfile=false \
-            -p:ArchiveOnBuild=false
+          OK=0
+          for X in $(ls -d /Applications/Xcode_26.?.app | sort -rV); do
+            echo "=== trying $X"
+            sudo xcode-select -s "$X"
+            if dotnet build WogiOS/WogiOS.csproj -c Release \
+                -p:EnableCodeSigning=false \
+                -p:CodesignRequireProvisioningProfile=false \
+                -p:ArchiveOnBuild=false > build.log 2>&1; then
+              echo "built with $X"; OK=1; break
+            fi
+            if ! grep -q "requires Xcode" build.log; then break; fi
+          done
+          tail -n 60 build.log
+          [ "$OK" = 1 ]
 
       - name: Make IPA
         run: |
