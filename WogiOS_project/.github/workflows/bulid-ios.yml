@@ -1,0 +1,46 @@
+name: Build unsigned IPA
+on: workflow_dispatch
+
+defaults:
+  run:
+    working-directory: WogiOS_project
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Select newest Xcode 26
+        run: |
+          X=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
+          echo "Using: $X"
+          [ -n "$X" ] && sudo xcode-select -s "$X"
+          xcodebuild -version
+
+      - name: Install iOS workload
+        run: dotnet workload install ios
+
+      - name: Build (no signing)
+        run: |
+          dotnet build WogiOS/WogiOS.csproj -c Release \
+            -p:EnableCodeSigning=false \
+            -p:CodesignRequireProvisioningProfile=false \
+            -p:ArchiveOnBuild=false
+
+      - name: Make IPA
+        run: |
+          APP=$(find WogiOS/bin -type d -name "*.app" | head -1)
+          echo "APP=$APP"
+          rm -rf Payload && mkdir Payload
+          cp -R "$APP" Payload/
+          zip -qr WogiOS-unsigned.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WogiOS-unsigned
+          path: WogiOS_project/WogiOS-unsigned.ipa
