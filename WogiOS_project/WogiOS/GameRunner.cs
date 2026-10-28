@@ -2,6 +2,10 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
+using System.Reflection;
+using System.Runtime.ExceptionServices;
+using System.Runtime.InteropServices;
+using System.Runtime.Loader;
 using System.Threading.Tasks;
 using Foundation;
 using UIKit;
@@ -10,7 +14,6 @@ using WogShim;
 
 namespace WogiOS;
 
-// Android 의 MainActivity.RunGame / FetchRelease 를 그대로 옮긴 것
 internal static class GameRunner
 {
     public static void Run(IosHost host, GameViewController ui)
@@ -22,7 +25,8 @@ internal static class GameRunner
                 ui.ShowStatus(text.Substring("[wog] [form] ".Length));
         };
 
-        string docs = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        string docs = NSFileManager.DefaultManager
+            .GetUrls(NSSearchPathDirectory.DocumentDirectory, NSSearchPathDomain.User)[0].Path;
         string assets = Path.Combine(docs, "assets");
         var layout = new GameLayout(
             Path.Combine(docs, "release"),
@@ -37,16 +41,69 @@ internal static class GameRunner
             ui.ShowStatus("게임을 준비하는 중… (처음에는 자료를 받느라 시간이 걸립니다)");
             host.StartGl();
             Host.Use(host);
-            GameLauncher.Run(layout, Host.Log);
+            Launch(layout);
             Host.Log("game exited");
         }
         catch (Exception ex)
         {
             Host.Log("FATAL " + ex);
             try { File.WriteAllText(Path.Combine(docs, "crash.txt"), ex.ToString()); } catch (IOException) { }
-            ui.InvokeOnMainThread(() => { });
             ui.ShowStatus("\n오류가 났습니다. 이 화면을 캡처해 보내 주세요.\n\n" +
                 string.Join("\n", ex.ToString().Split('\n').Take(12)), error: true);
+        }
+    }
+
+    // GameLauncher.Run 과 같은 동작. 단, iOS 경로 표기(/var vs /private/var) 차이로
+    // 실패하던 "패치본인지 확인" 부분만 느슨하게 바꿨다.
+    static void Launch(GameLayout layout)
+    {
+        string patched = GameLauncher.Prepare(layout, Host.Log);
+        Directory.CreateDirectory(layout.SaveDir);
+        Environment.SetEnvironmentVariable("DUELDX_SAVEDIR", layout.SaveDir);
+        if (layout.AssetsDir != null)
+            Environment.SetEnvironmentVariable("WAROFGENESIS_ASSETS", layout.AssetsDir);
+        string rel = layout.ReleaseDir.EndsWith(Path.DirectorySeparatorChar)
+            ? layout.ReleaseDir : layout.ReleaseDir + Path.DirectorySeparatorChar;
+        AppContext.SetData("APP_CONTEXT_BASE_DIRECTORY", rel);
+
+        AssemblyLoadContext.Default.Resolving += (ctx, name) =>
+        {
+            foreach (string dir in new[] { patched, layout.ReleaseDir })
+            {
+                string p = Path.Combine(dir, name.Name + ".dll");
+                if (File.Exists(p)) return ctx.LoadFromAssemblyPath(p);
+            }
+            return null;
+        };
+
+        Assembly game = null;
+        foreach (string item in GamePatcher.GameAssemblies.Reverse())
+        {
+            Assembly loaded = AssemblyLoadContext.Default.LoadFromAssemblyPath(Path.Combine(patched, item));
+            if (item == "WarOfGenesis.dll") game = loaded;
+        }
+
+        foreach (Assembly asm in AppDomain.CurrentDomain.GetAssemblies()
+                     .Where(x => x.GetName().Name.StartsWith("WarOfGenesis", StringComparison.Ordinal)).ToList())
+        {
+            Host.Log("loaded " + asm.GetName().Name + " from " + asm.Location);
+            if (!asm.Location.Contains("/patched/"))
+                throw new InvalidOperationException(asm.GetName().Name + " was loaded unpatched from " + asm.Location);
+            NativeLibrary.SetDllImportResolver(asm, (lib, _, _) =>
+                throw new DllNotFoundException("unpatched P/Invoke into " + lib + " in " + asm.GetName().Name));
+        }
+
+        if (game == null) throw new FileNotFoundException("patched WarOfGenesis.dll missing");
+        MethodInfo main = game.GetType("DuelDx.Program", true)
+            .GetMethod("Main", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+        Host.Log("starting " + game.GetName().Name);
+        try
+        {
+            main.Invoke(null, main.GetParameters().Length == 0 ? null : new object[] { Array.Empty<string>() });
+        }
+        catch (TargetInvocationException ex) when (ex.InnerException != null)
+        {
+            ExceptionDispatchInfo.Capture(ex.InnerException).Throw();
         }
     }
 
