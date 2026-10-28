@@ -7,7 +7,7 @@ defaults:
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
 
@@ -15,11 +15,12 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Select newest Xcode 26
+      - name: Select Xcode 27
         run: |
-          X=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
+          ls -d /Applications/Xcode*.app
+          X=$(ls -d /Applications/Xcode_27*.app 2>/dev/null | sort -V | tail -1)
           echo "Using: $X"
-          [ -n "$X" ] && sudo xcode-select -s "$X"
+          sudo xcode-select -s "$X"
           xcodebuild -version
 
       - name: Install iOS workload
