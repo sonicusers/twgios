@@ -15,7 +15,6 @@
     <!-- 게임 DLL을 실행 중에 불러오므로 인터프리터 필수, 링커(트리밍) 끔 -->
     <UseInterpreter>true</UseInterpreter>
     <MtouchLink>None</MtouchLink>
-    <PublishTrimmed>false</PublishTrimmed>
     <EnableAssemblyILStripping>false</EnableAssemblyILStripping>
     <InvariantGlobalization>false</InvariantGlobalization>
     <!-- 서명 없는 빌드 -->
