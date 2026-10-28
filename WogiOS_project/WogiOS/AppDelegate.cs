@@ -13,7 +13,7 @@ public class AppDelegate : UIApplicationDelegate
     public override bool FinishedLaunching(UIApplication application, NSDictionary launchOptions)
     {
         var session = AVAudioSession.SharedInstance();
-        session.SetCategory(AVAudioSessionCategory.Playback, out _);
+        session.SetCategory(AVAudioSession.CategoryPlayback, out _);
         session.SetActive(true, out _);
 
         Window = new UIWindow(UIScreen.MainScreen.Bounds) { BackgroundColor = UIColor.Black };
