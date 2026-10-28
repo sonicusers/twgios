@@ -6,6 +6,7 @@ using UIKit;
 using WogPatcher;
 using WogShim;
 using WogShim.Win32;
+using WinMessages = WogShim.Win32.Messages;
 
 namespace WogiOS;
 
@@ -79,7 +80,7 @@ internal sealed class TouchInput
                 _lastY += s * _wheelStep;
                 _twoMoved = true;
                 var (cx, cy) = Display.ToClient(x, y);
-                Messages.PostMouse(WHEEL, cx, cy, (nint)((s * 120) << 16));
+                WinMessages.PostMouse(msg, cx, cy, (nint)((s * 120) << 16));
             }
         }
         else if (_mode == Mode.Pending && Math.Max(Math.Abs(x - _downX), Math.Abs(y - _downY)) > _slop)
