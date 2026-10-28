@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-ios</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <RuntimeIdentifier>ios-arm64</RuntimeIdentifier>
+    <SupportedOSPlatformVersion>15.0</SupportedOSPlatformVersion>
+    <ApplicationId>com.wogios.app</ApplicationId>
+    <ApplicationTitle>WarOfGenesis</ApplicationTitle>
+    <ApplicationDisplayVersion>0.1</ApplicationDisplayVersion>
+    <ApplicationVersion>1</ApplicationVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <LangVersion>latest</LangVersion>
+    <!-- 게임 DLL을 실행 중에 불러오므로 인터프리터 필수, 링커(트리밍) 끔 -->
+    <UseInterpreter>true</UseInterpreter>
+    <MtouchLink>None</MtouchLink>
+    <PublishTrimmed>false</PublishTrimmed>
+    <EnableAssemblyILStripping>false</EnableAssemblyILStripping>
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <!-- 서명 없는 빌드 -->
+    <EnableCodeSigning>false</EnableCodeSigning>
+    <CodesignRequireProvisioningProfile>false</CodesignRequireProvisioningProfile>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="SkiaSharp" Version="3.119.0" />
+    <PackageReference Include="SkiaSharp.NativeAssets.iOS" Version="3.119.0" />
+    <PackageReference Include="Mono.Cecil" Version="0.11.6" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="WogShim"><HintPath>..\libs\WogShim.dll</HintPath></Reference>
+    <Reference Include="WogPatcher"><HintPath>..\libs\WogPatcher.dll</HintPath></Reference>
+    <!-- 패처가 읽을 원본 shim (어셈블리가 아닌 리소스로 한 벌 더 넣음) -->
+    <BundleResource Include="..\libs\WogShim.dll" Link="WogShim.bin" />
+  </ItemGroup>
+</Project>
