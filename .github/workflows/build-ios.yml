@@ -13,32 +13,32 @@ jobs:
 
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 10.0.303
+          dotnet-version: 10.0.x
 
-      - name: Pin SDK version
-        run: echo '{"sdk":{"version":"10.0.303","rollForward":"disable"}}' > global.json
-
-      - name: Install iOS workload (pinned)
+      - name: Find matching iOS workload and build
         run: |
           dotnet --version
-          dotnet workload install ios --version 10.0.303.3
-          dotnet workload list
-
-      - name: Build (no signing)
-        run: |
+          dotnet workload search version --take 15 | tee sets.txt
+          VERS=$(grep -oE '[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?' sets.txt | awk '!s[$0]++')
+          BUILD="dotnet build WogiOS/WogiOS.csproj -c Release -p:EnableCodeSigning=false -p:CodesignRequireProvisioningProfile=false -p:ArchiveOnBuild=false"
           OK=0
-          for X in $(ls -d /Applications/Xcode_26.?.app | sort -rV); do
-            echo "=== trying $X"
-            sudo xcode-select -s "$X"
-            if dotnet build WogiOS/WogiOS.csproj -c Release \
-                -p:EnableCodeSigning=false \
-                -p:CodesignRequireProvisioningProfile=false \
-                -p:ArchiveOnBuild=false > build.log 2>&1; then
-              echo "built with $X"; OK=1; break
+          for V in $VERS; do
+            echo "=== workload set $V"
+            if ! dotnet workload install ios --version "$V" > inst.log 2>&1; then
+              tail -n 3 inst.log
+              continue
             fi
-            if ! grep -q "requires Xcode" build.log; then break; fi
+            if $BUILD > build.log 2>&1; then OK=1; break; fi
+            NEED=$(grep -oE 'requires Xcode [0-9]+\.[0-9]+' build.log | head -1 | grep -oE '[0-9]+\.[0-9]+' || true)
+            if [ -z "$NEED" ]; then echo "real build error"; break; fi
+            echo "needs Xcode $NEED"
+            if [ -d "/Applications/Xcode_$NEED.app" ]; then
+              sudo xcode-select -s "/Applications/Xcode_$NEED.app"
+              if $BUILD > build.log 2>&1; then OK=1; break; fi
+              echo "build failed with matching Xcode"; break
+            fi
           done
-          tail -n 60 build.log
+          tail -n 80 build.log
           [ "$OK" = 1 ]
 
       - name: Make IPA
