@@ -80,7 +80,7 @@ internal sealed class TouchInput
                 _lastY += s * _wheelStep;
                 _twoMoved = true;
                 var (cx, cy) = Display.ToClient(x, y);
-                WinMessages.PostMouse(msg, cx, cy, (nint)((s * 120) << 16));
+                WinMessages.PostMouse(WHELL, cx, cy, (nint)((s * 120) << 16));
             }
         }
         else if (_mode == Mode.Pending && Math.Max(Math.Abs(x - _downX), Math.Abs(y - _downY)) > _slop)
@@ -144,9 +144,9 @@ internal sealed class TouchInput
 
     void CancelLongPress() { _lp?.Invalidate(); _lp = null; }
 
-    static void Post(uint msg, float x, float y)
+ static void Post(uint msg, float x, float y)
     {
         var (cx, cy) = Display.ToClient(x, y);
-        Messages.PostMouse(msg, cx, cy);
+        WinMessages.PostMouse(msg, cx, cy);
     }
 }
