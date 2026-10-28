@@ -9,11 +9,12 @@ jobs:
   build:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-dotnet@v4
+          - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 10.0.3xx
+          dotnet-version: 10.0.303
+
+      - name: Pin SDK version
+        run: echo '{"sdk":{"version":"10.0.303","rollForward":"disable"}}' > global.json
 
       - name: Install iOS workload (pinned)
         run: |
