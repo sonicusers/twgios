@@ -140,15 +140,25 @@ internal sealed class GameViewController : UIViewController
         _opacitySlider.ValueChanged += (s, e) =>
         {
             _padAlpha = _opacitySlider.Value;
-            _pad.SetOpacity(_padAlpha);
+            ApplyPadAlpha();
             NSUserDefaults.StandardUserDefaults.SetFloat(_padAlpha, "padOpacity");
         };
         _view.AddSubview(_opacitySlider);
+        ApplyPadAlpha();
 
         // 블루투스 컨트롤러가 연결/해제되면 화면 패드를 숨기거나 되살린다
         NSNotificationCenter.DefaultCenter.AddObserver(GCController.DidConnectNotification, _ => InvokeOnMainThread(ApplyPad));
         NSNotificationCenter.DefaultCenter.AddObserver(GCController.DidDisconnectNotification, _ => InvokeOnMainThread(ApplyPad));
         ApplyPad();
+    }
+
+    // 패드와 '패드'/◐ 버튼이 같은 투명도를 따른다. 버튼은 너무 연해서 못 찾는 일이 없게 최소 35%는 유지한다.
+    void ApplyPadAlpha()
+    {
+        _pad.SetOpacity(_padAlpha);
+        float ui = Math.Max(0.35f, _padAlpha);
+        _padToggle.Alpha = ui;
+        _opacityBtn.Alpha = ui;
     }
 
     void ApplyPad()
