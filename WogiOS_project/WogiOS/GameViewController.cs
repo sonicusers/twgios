@@ -42,8 +42,10 @@ internal sealed class GameViewController : UIViewController
     GameView _view;
     UILabel _status;
     PadOverlay _pad;
-    UIButton _padToggle;
+    UIButton _padToggle, _opacityBtn;
+    UISlider _opacitySlider;
     bool _padWanted;
+    float _padAlpha;
     Thread _game;
     static readonly Queue<string> Lines = new();
 
@@ -110,6 +112,39 @@ internal sealed class GameViewController : UIViewController
         };
         _view.AddSubview(_padToggle);
 
+        // 패드 투명도 조절 (◐ 버튼을 누르면 슬라이더가 나타남)
+        _padAlpha = NSUserDefaults.StandardUserDefaults.FloatForKey("padOpacity");
+        if (_padAlpha < 0.15f || _padAlpha > 1f) _padAlpha = 0.6f;
+        _pad.SetOpacity(_padAlpha);
+
+        _opacityBtn = UIButton.FromType(UIButtonType.System);
+        _opacityBtn.SetTitle("◐", UIControlState.Normal);
+        _opacityBtn.SetTitleColor(UIColor.White, UIControlState.Normal);
+        _opacityBtn.TitleLabel.Font = UIFont.BoldSystemFontOfSize(18);
+        _opacityBtn.BackgroundColor = PadStyle.C(28, 36, 58, 0.85f);
+        _opacityBtn.Layer.CornerRadius = 17;
+        _opacityBtn.Layer.BorderWidth = 2;
+        _opacityBtn.Layer.BorderColor = PadStyle.Border.CGColor;
+        _opacityBtn.TouchUpInside += (s, e) => _opacitySlider.Hidden = !_opacitySlider.Hidden;
+        _view.AddSubview(_opacityBtn);
+
+        _opacitySlider = new UISlider
+        {
+            MinValue = 0.15f,
+            MaxValue = 1f,
+            Value = _padAlpha,
+            Hidden = true,
+            BackgroundColor = PadStyle.C(28, 36, 58, 0.85f),
+        };
+        _opacitySlider.Layer.CornerRadius = 12;
+        _opacitySlider.ValueChanged += (s, e) =>
+        {
+            _padAlpha = _opacitySlider.Value;
+            _pad.SetOpacity(_padAlpha);
+            NSUserDefaults.StandardUserDefaults.SetFloat(_padAlpha, "padOpacity");
+        };
+        _view.AddSubview(_opacitySlider);
+
         // 블루투스 컨트롤러가 연결/해제되면 화면 패드를 숨기거나 되살린다
         NSNotificationCenter.DefaultCenter.AddObserver(GCController.DidConnectNotification, _ => InvokeOnMainThread(ApplyPad));
         NSNotificationCenter.DefaultCenter.AddObserver(GCController.DidDisconnectNotification, _ => InvokeOnMainThread(ApplyPad));
@@ -122,6 +157,8 @@ internal sealed class GameViewController : UIViewController
         bool show = _padWanted && !physical;
         _pad.Show(show);
         _padToggle.Hidden = physical;
+        _opacityBtn.Hidden = !show;
+        if (!show) _opacitySlider.Hidden = true;
         PadInput.SetOverlayActive(show);
     }
 
@@ -130,7 +167,10 @@ internal sealed class GameViewController : UIViewController
         if (_pad == null) return;
         _pad.Frame = _view.Bounds;
         var ins = _view.SafeAreaInsets;
-        _padToggle.Frame = new CGRect((_view.Bounds.Width - 84) / 2, ins.Top + 6, 84, 34);
+        nfloat tx = (_view.Bounds.Width - 84) / 2, ty = ins.Top + 6;
+        _padToggle.Frame = new CGRect(tx, ty, 84, 34);
+        _opacityBtn.Frame = new CGRect(tx + 84 + 8, ty, 34, 34);
+        _opacitySlider.Frame = new CGRect((_view.Bounds.Width - 220) / 2, ty + 34 + 8, 220, 32);
     }
 
     public void HideStatus() => InvokeOnMainThread(() => _status.Hidden = true);
