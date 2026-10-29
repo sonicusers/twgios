@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Threading;
 using AVFoundation;
@@ -130,8 +131,76 @@ internal sealed unsafe class IosHost : IHost
         return chosen;
     }
 
-    // 폴더 선택 가져오기는 아직 없음: 파일 앱으로 Documents/assets/ 에 직접 넣어 주세요
-    public string PickFolder(string description) => null;
+    // ---- 폴더 선택 (파일 앱) ----
+    const string BookmarkKey = "pickedFolderBookmarks";
+    // 고른 폴더는 앱이 켜져 있는 동안 계속 읽을 수 있어야 하므로 접근 권한을 놓지 않고 들고 있는다
+    static readonly List<NSUrl> Scoped = new();
+
+    // 앱을 켤 때 지난번에 고른 폴더들의 접근 권한을 되살린다 (게임이 저장해 둔 경로가 계속 유효하도록)
+    public static void RestorePickedFolders()
+    {
+        var saved = NSUserDefaults.StandardUserDefaults.StringForKey(BookmarkKey);
+        if (string.IsNullOrEmpty(saved)) return;
+        foreach (var b64 in saved.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            try
+            {
+                var data = NSData.FromArray(Convert.FromBase64String(b64));
+                var url = NSUrl.FromBookmarkData(data, (NSUrlBookmarkResolutionOptions)0, null, out bool stale, out NSError err);
+                if (url != null && url.StartAccessingSecurityScopedResource()) Scoped.Add(url);
+            }
+            catch (FormatException) { }
+        }
+    }
+
+    static void SaveBookmark(NSUrl url)
+    {
+        var bm = url.CreateBookmarkData((NSUrlBookmarkCreationOptions)0, null, null, out NSError err);
+        if (bm == null) return;
+        var d = NSUserDefaults.StandardUserDefaults;
+        var list = new List<string>((d.StringForKey(BookmarkKey) ?? "").Split('\n', StringSplitOptions.RemoveEmptyEntries));
+        list.Add(Convert.ToBase64String(bm.ToArray()));
+        while (list.Count > 8) list.RemoveAt(0);
+        d.SetString(string.Join("\n", list), BookmarkKey);
+    }
+
+    // 게임 스레드에서 불린다. 안내 창을 띄운 뒤 파일 앱의 폴더 선택 화면을 열고, 고른 폴더 경로를 돌려준다. 취소하면 null
+    public string PickFolder(string description)
+    {
+        Host.LogSink("[pick] " + description);
+        if (NSThread.IsMain) return null;
+        string result = null;
+        using var done = new ManualResetEventSlim(false);
+        UIApplication.SharedApplication.InvokeOnMainThread(() =>
+        {
+            var root = UIApplication.SharedApplication.KeyWindow?.RootViewController;
+            if (root == null) { done.Set(); return; }
+            var alert = UIAlertController.Create("폴더 선택", description, UIAlertControllerStyle.Alert);
+            alert.AddAction(UIAlertAction.Create("폴더 고르기", UIAlertActionStyle.Default, _ =>
+            {
+                // 폴더(public.folder)를 고르는 파일 앱 화면
+                var picker = new UIDocumentPickerViewController(new[] { "public.folder" }, UIDocumentPickerMode.Open);
+                picker.AllowsMultipleSelection = false;
+                picker.DidPickDocumentAtUrls += (s, e) =>
+                {
+                    var url = e.Urls != null && e.Urls.Length > 0 ? e.Urls[0] : null;
+                    if (url != null && url.StartAccessingSecurityScopedResource())
+                    {
+                        Scoped.Add(url);
+                        SaveBookmark(url);
+                        result = url.Path;
+                    }
+                    done.Set();
+                };
+                picker.WasCancelled += (s, e) => done.Set();
+                root.PresentViewController(picker, true, null);
+            }));
+            alert.AddAction(UIAlertAction.Create("취소", UIAlertActionStyle.Cancel, _ => done.Set()));
+            root.PresentViewController(alert, true, null);
+        });
+        done.Wait();
+        return result;
+    }
 
     public IAudioSink OpenAudio(int sampleRate, int channels, int bitsPerSample)
     {
