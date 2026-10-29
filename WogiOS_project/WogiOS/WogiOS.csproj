@@ -18,6 +18,7 @@
          (예전: 전부 인터프리터 → FastBink 가 있어도 느림). 빌드가 AOT 문제로 실패하면 이 줄을 지우고 알려 주세요. -->
     <MtouchInterpreter>-all</MtouchInterpreter>
     <MtouchLink>None</MtouchLink>
+    <AppIcon>AppIcon</AppIcon>
     <EnableAssemblyILStripping>false</EnableAssemblyILStripping>
     <InvariantGlobalization>false</InvariantGlobalization>
     <!-- 서명 없는 빌드 -->
@@ -34,7 +35,8 @@
     <Reference Include="WogPatcher"><HintPath>..\libs\WogPatcher.dll</HintPath></Reference>
     <!-- 패처가 읽을 원본 shim (어셈블리가 아닌 리소스로 한 벌 더 넣음) -->
     <BundleResource Include="..\libs\WogShim.dll" Link="WogShim.bin" />
-    <!-- 앱 아이콘 (홈 화면). Info.plist 의 CFBundleIcons 와 파일 이름이 맞아야 한다 -->
-    <BundleResource Include="Icons\*.png" Link="%(Filename)%(Extension)" />
+    <!-- 앱 아이콘: 에셋 카탈로그(Assets.xcassets/AppIcon.appiconset) 를 빌드가 컴파일한다 -->
+    <ImageAsset Remove="Assets.xcassets\**" />
+    <ImageAsset Include="Assets.xcassets\**\*.*" />
   </ItemGroup>
 </Project>
