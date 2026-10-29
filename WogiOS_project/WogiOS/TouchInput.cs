@@ -26,10 +26,10 @@ internal sealed class TouchInput
 
     public TouchInput(float scale) { _scale = scale; _slop = 12 * scale; _wheelStep = 36 * scale; }
 
-    static List<UITouch> Active(UIEvent e)
+    static List<UITouch> Active(UIView v, UIEvent e)
     {
         var l = e.AllTouches.ToArray<UITouch>()
-            .Where(t => t.Phase != UITouchPhase.Ended && t.Phase != UITouchPhase.Cancelled).ToList();
+            .Where(t => t.View == v && t.Phase != UITouchPhase.Ended && t.Phase != UITouchPhase.Cancelled).ToList();
         l.Sort((a, b) => a.Timestamp.CompareTo(b.Timestamp));
         return l;
     }
@@ -42,7 +42,7 @@ internal sealed class TouchInput
 
     public void Began(UIView v, UIEvent e)
     {
-        var a = Active(e);
+        var a = Active(v, e);
         if (a.Count == 1)
         {
             (_downX, _downY) = Pos(v, a[0]);
@@ -66,7 +66,7 @@ internal sealed class TouchInput
 
     public void Moved(UIView v, UIEvent e)
     {
-        var a = Active(e);
+        var a = Active(v, e);
         if (a.Count == 0) return;
         var (x, y) = Pos(v, a[0]);
         _curX = x; _curY = y;
@@ -95,7 +95,7 @@ internal sealed class TouchInput
 
     public void Ended(UIView v, UIEvent e)
     {
-        var a = Active(e);
+        var a = Active(v, e);
         if (a.Count == 0)
         {
             CancelLongPress();
