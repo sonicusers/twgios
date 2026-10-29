@@ -26,6 +26,7 @@ internal sealed class PadButton : UIView
     readonly UILabel _label;
     int _touches;
     bool _down;
+    float _base = 0.8f;
 
     public PadButton(string text, int bit, UIColor fill, float fontSize = 20)
     {
@@ -33,7 +34,7 @@ internal sealed class PadButton : UIView
         MultipleTouchEnabled = true;
         UserInteractionEnabled = true;
         BackgroundColor = fill;
-        Alpha = 0.8f;
+        Alpha = _base;
         Layer.BorderWidth = 3;
         Layer.BorderColor = PadStyle.Border.CGColor;
         _label = new UILabel
@@ -58,7 +59,7 @@ internal sealed class PadButton : UIView
     {
         if (_down) return;
         _down = true;
-        Alpha = 1f;
+        Alpha = Math.Min(1f, _base + 0.3f);
         PadInput.SetBits(0, _bit);
         PadStyle.Tap();
     }
@@ -67,8 +68,15 @@ internal sealed class PadButton : UIView
     {
         if (!_down) return;
         _down = false;
-        Alpha = 0.8f;
+        Alpha = _base;
         PadInput.SetBits(_bit, 0);
+    }
+
+    // 평소(안 눌렀을 때) 투명도. 눌리면 조금 더 진해진다
+    public void SetBaseAlpha(float a)
+    {
+        _base = a;
+        Alpha = _down ? Math.Min(1f, a + 0.3f) : a;
     }
 
     public void Reset() { _touches = 0; Up(); }
@@ -194,6 +202,12 @@ internal sealed class PadOverlay : UIView
     {
         var v = base.HitTest(point, uievent);
         return v == this ? null : v;
+    }
+
+    public void SetOpacity(float a)
+    {
+        foreach (var b in new[] { _lt, _lb, _rt, _rb, _a, _b, _x, _y, _back, _start }) b.SetBaseAlpha(a);
+        _dpad.Alpha = Math.Min(1f, a / 0.8f);
     }
 
     public void Show(bool on)
