@@ -5,6 +5,7 @@ using System.Threading;
 using CoreAnimation;
 using CoreGraphics;
 using Foundation;
+using GameController;
 using ObjCRuntime;
 using UIKit;
 using WogShim;
@@ -40,6 +41,9 @@ internal sealed class GameViewController : UIViewController
 {
     GameView _view;
     UILabel _status;
+    PadOverlay _pad;
+    UIButton _padToggle;
+    bool _padWanted;
     Thread _game;
     static readonly Queue<string> Lines = new();
 
@@ -61,6 +65,7 @@ internal sealed class GameViewController : UIViewController
             AutoresizingMask = UIViewAutoresizing.FlexibleDimensions,
         };
         _view.AddSubview(_status);
+        BuildPad();
         View = _view;
     }
 
@@ -82,11 +87,58 @@ internal sealed class GameViewController : UIViewController
         });
     }
 
+    // ---- 화면 패드 ----
+    void BuildPad()
+    {
+        _padWanted = NSUserDefaults.StandardUserDefaults.BoolForKey("padVisible");
+        _pad = new PadOverlay();
+        _view.AddSubview(_pad);
+
+        _padToggle = UIButton.FromType(UIButtonType.System);
+        _padToggle.SetTitle("패드", UIControlState.Normal);
+        _padToggle.SetTitleColor(UIColor.White, UIControlState.Normal);
+        _padToggle.TitleLabel.Font = UIFont.BoldSystemFontOfSize(15);
+        _padToggle.BackgroundColor = PadStyle.C(28, 36, 58, 0.85f);
+        _padToggle.Layer.CornerRadius = 17;
+        _padToggle.Layer.BorderWidth = 2;
+        _padToggle.Layer.BorderColor = PadStyle.Border.CGColor;
+        _padToggle.TouchUpInside += (s, e) =>
+        {
+            _padWanted = !_padWanted;
+            NSUserDefaults.StandardUserDefaults.SetBool(_padWanted, "padVisible");
+            ApplyPad();
+        };
+        _view.AddSubview(_padToggle);
+
+        // 블루투스 컨트롤러가 연결/해제되면 화면 패드를 숨기거나 되살린다
+        NSNotificationCenter.DefaultCenter.AddObserver(GCController.DidConnectNotification, _ => InvokeOnMainThread(ApplyPad));
+        NSNotificationCenter.DefaultCenter.AddObserver(GCController.DidDisconnectNotification, _ => InvokeOnMainThread(ApplyPad));
+        ApplyPad();
+    }
+
+    void ApplyPad()
+    {
+        bool physical = PadInput.HasPhysical;
+        bool show = _padWanted && !physical;
+        _pad.Show(show);
+        _padToggle.Hidden = physical;
+        PadInput.SetOverlayActive(show);
+    }
+
+    void LayoutPad()
+    {
+        if (_pad == null) return;
+        _pad.Frame = _view.Bounds;
+        var ins = _view.SafeAreaInsets;
+        _padToggle.Frame = new CGRect((_view.Bounds.Width - 84) / 2, ins.Top + 6, 84, 34);
+    }
+
     public void HideStatus() => InvokeOnMainThread(() => _status.Hidden = true);
 
     public override void ViewDidLayoutSubviews()
     {
         base.ViewDidLayoutSubviews();
+        LayoutPad();
         if (_game != null || _view.Bounds.Width < 1) return;
 
         var host = new IosHost(_view);
