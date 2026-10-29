@@ -25,6 +25,8 @@ internal static class GameRunner
                 ui.ShowStatus(text.Substring("[wog] [form] ".Length));
         };
 
+        IosHost.RestorePickedFolders();
+
         string docs = NSFileManager.DefaultManager
             .GetUrls(NSSearchPathDirectory.DocumentDirectory, NSSearchPathDomain.User)[0].Path;
         string assets = Path.Combine(docs, "assets");
