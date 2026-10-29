@@ -14,9 +14,6 @@
     <LangVersion>latest</LangVersion>
     <!-- 게임 DLL을 실행 중에 불러오므로 인터프리터 필수, 링커(트리밍) 끔 -->
     <UseInterpreter>true</UseInterpreter>
-    <!-- 앱 본체·shim·.NET 기본 라이브러리는 미리 컴파일(AOT), 실행 중에 불러오는 게임 DLL 만 인터프리터로 돌린다.
-         (예전: 전부 인터프리터 → FastBink 가 있어도 느림). 빌드가 AOT 문제로 실패하면 이 줄을 지우고 알려 주세요. -->
-    <MtouchInterpreter>-all</MtouchInterpreter>
     <MtouchLink>None</MtouchLink>
     <EnableAssemblyILStripping>false</EnableAssemblyILStripping>
     <InvariantGlobalization>false</InvariantGlobalization>
