@@ -41,7 +41,9 @@ internal static class GameRunner
         try
         {
             ui.ShowStatus("게임 파일 확인 중…");
+            WipeIfNewerRelease(ui, layout);
             FetchRelease(host, ui, layout.ReleaseDir, layout.ShimPath, docs);
+            DropStalePatched(layout, docs);
             ui.ShowStatus("게임을 준비하는 중… (처음에는 자료를 받느라 시간이 걸립니다)");
             host.StartGl();
             Host.Use(host);
@@ -72,6 +74,7 @@ internal static class GameRunner
     static void Launch(GameLayout layout)
     {
         string patched = GameLauncher.Prepare(layout, Host.Log);
+        MarkPatchedVersion(layout);
         // BGM(Bink) 디코딩을 앱 본체(AOT)의 FastBink 로 연결 — 인터프리터로 곡 전체를 푸느라 생기던 지연을 없앤다
         BinkHook.Apply(Path.Combine(patched, "WarOfGenesis.Assets.dll"), Host.Log);
         Directory.CreateDirectory(layout.SaveDir);
@@ -121,6 +124,94 @@ internal static class GameRunner
         {
             ExceptionDispatchInfo.Capture(ex.InnerException).Throw();
         }
+    }
+
+    // 최신 버전이 설치된 버전보다 높으면, 다운로드 전에 release/patched 폴더를 먼저 지운다.
+    // 확인 실패(오프라인 등)나 버전 해석 실패 시에는 아무것도 지우지 않는다.
+    static void WipeIfNewerRelease(GameViewController ui, GameLayout layout)
+    {
+        try
+        {
+            Version installed = ParseVer(ReleaseFetcher.InstalledVersion(layout.ReleaseDir));
+            if (installed == null) return;
+            Version latest = FetchLatestVersion();
+            if (latest == null || latest <= installed) return;
+            Host.Log("새 버전 v" + latest + " 감지 (설치됨 v" + installed + ") -> release/patched 삭제 후 다운로드");
+            ui.ShowStatus("새 버전 v" + latest + " 을 받기 위해 기존 파일을 정리하는 중…");
+            foreach (string dir in new[] { layout.PatchedDir, layout.ReleaseDir })
+                if (Directory.Exists(dir)) Directory.Delete(dir, true);
+            try { File.Delete(PatchedMarker(layout)); } catch (Exception) { }
+        }
+        catch (Exception ex) { Host.Log("wipe check skipped: " + ex.Message); }
+    }
+
+    static Version FetchLatestVersion()
+    {
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+        http.DefaultRequestHeaders.UserAgent.ParseAdd("WogiOS/0.1");
+        string json = http.GetStringAsync(
+            "https://github.com/Kyeongrok/the-war-of-genesis-clicker/releases/latest/download/releases.win.json")
+            .GetAwaiter().GetResult();
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        Version best = null;
+        foreach (var root in doc.RootElement.EnumerateObject())
+        {
+            if (!root.Name.Equals("Assets", StringComparison.OrdinalIgnoreCase)) continue;
+            foreach (var asset in root.Value.EnumerateArray())
+            {
+                string ver = null, type = null;
+                foreach (var f in asset.EnumerateObject())
+                {
+                    if (f.Name.Equals("Version", StringComparison.OrdinalIgnoreCase)) ver = f.Value.GetString();
+                    else if (f.Name.Equals("Type", StringComparison.OrdinalIgnoreCase)) type = f.Value.ToString();
+                }
+                if (type != null && !type.Equals("Full", StringComparison.OrdinalIgnoreCase)) continue;
+                Version v = ParseVer(ver);
+                if (v != null && (best == null || v > best)) best = v;
+            }
+        }
+        return best;
+    }
+
+    static Version ParseVer(string s)
+    {
+        if (string.IsNullOrWhiteSpace(s)) return null;
+        s = s.Trim().TrimStart('v', 'V');
+        int cut = s.IndexOfAny(new[] { '-', '+' });
+        if (cut >= 0) s = s.Substring(0, cut);
+        return Version.TryParse(s, out var v) ? v : null;
+    }
+
+    // 새 버전을 받았는데 예전 patched 폴더가 "최신"으로 취급돼 옛 버전으로 실행되는 문제 방지:
+    // patched 를 만들 때 쓴 release 버전을 patched.version 에 적어 두고, 지금 release 버전과 다르면 patched 를 지운다.
+    // (앱이 다운로드 직후 꺼져도 다음 실행 때 다시 검사하므로 안전)
+    static string PatchedMarker(GameLayout layout) =>
+        Path.Combine(Path.GetDirectoryName(layout.PatchedDir.TrimEnd(Path.DirectorySeparatorChar)), "patched.version");
+
+    static void DropStalePatched(GameLayout layout, string docs)
+    {
+        try
+        {
+            string cur = ReleaseFetcher.InstalledVersion(layout.ReleaseDir);
+            string marker = PatchedMarker(layout);
+            string was = File.Exists(marker) ? File.ReadAllText(marker).Trim() : null;
+            if (cur != null && was != cur && Directory.Exists(layout.PatchedDir))
+            {
+                Host.Log("release v" + cur + " != patched v" + (was ?? "?") + " -> patched 폴더 삭제");
+                Directory.Delete(layout.PatchedDir, true);
+            }
+        }
+        catch (Exception ex) { Host.Log("stale patched cleanup failed: " + ex.Message); }
+    }
+
+    static void MarkPatchedVersion(GameLayout layout)
+    {
+        try
+        {
+            string cur = ReleaseFetcher.InstalledVersion(layout.ReleaseDir);
+            if (cur != null) File.WriteAllText(PatchedMarker(layout), cur);
+        }
+        catch (Exception) { }
     }
 
     static string ExtractShim()
