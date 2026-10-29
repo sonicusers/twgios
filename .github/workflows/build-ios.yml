@@ -45,6 +45,21 @@ jobs:
         run: |
           APP=$(find WogiOS/bin -type d -name "*.app" | head -1)
           echo "APP=$APP"
+          CAT=WogiOS/Assets.xcassets
+          if [ ! -f "$CAT/AppIcon.appiconset/Contents.json" ]; then
+            echo "Assets.xcassets not in repo -> generating from AppIcon-1024.png"
+            SRC=$(find . -maxdepth 2 -iname "AppIcon-1024.png" -not -path "./WogiOS/bin/*" | head -1)
+            if [ -z "$SRC" ]; then
+              echo "ERROR: need WogiOS_project/AppIcon-1024.png (or the Assets.xcassets folder) in the repo"
+              ls -R . | head -50
+              exit 1
+            fi
+            echo "icon source: $SRC"
+            mkdir -p "$CAT/AppIcon.appiconset"
+            cp "$SRC" "$CAT/AppIcon.appiconset/icon-1024.png"
+            echo '{"info":{"author":"xcode","version":1}}' > "$CAT/Contents.json"
+            echo '{"images":[{"filename":"icon-1024.png","idiom":"universal","platform":"ios","size":"1024x1024"}],"info":{"author":"xcode","version":1}}' > "$CAT/AppIcon.appiconset/Contents.json"
+          fi
           if [ ! -f "$APP/Assets.car" ]; then
             echo "Assets.car missing -> running actool"
             xcrun actool WogiOS/Assets.xcassets \
