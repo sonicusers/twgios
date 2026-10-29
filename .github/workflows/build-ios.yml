@@ -41,6 +41,25 @@ jobs:
           tail -n 80 build.log
           [ "$OK" = 1 ]
 
+      - name: Ensure app icon (compile asset catalog with actool)
+        run: |
+          APP=$(find WogiOS/bin -type d -name "*.app" | head -1)
+          echo "APP=$APP"
+          if [ ! -f "$APP/Assets.car" ]; then
+            echo "Assets.car missing -> running actool"
+            xcrun actool WogiOS/Assets.xcassets \
+              --compile "$APP" \
+              --platform iphoneos \
+              --minimum-deployment-target 15.0 \
+              --app-icon AppIcon \
+              --target-device iphone --target-device ipad \
+              --output-partial-info-plist /tmp/actool-partial.plist \
+              --output-format human-readable-text
+            /usr/libexec/PlistBuddy -c "Merge /tmp/actool-partial.plist" "$APP/Info.plist"
+          fi
+          ls -la "$APP" | grep -E "Assets.car|AppIcon" || { echo "ICON MISSING"; exit 1; }
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIcons" "$APP/Info.plist" || true
+
       - name: Make IPA
         run: |
           APP=$(find WogiOS/bin -type d -name "*.app" | head -1)
