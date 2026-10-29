@@ -42,7 +42,7 @@ internal sealed class GameViewController : UIViewController
     GameView _view;
     UILabel _status;
     PadOverlay _pad;
-    UIButton _padToggle, _opacityBtn;
+    UIButton _padToggle, _opacityBtn, _editBtn;
     UISlider _opacitySlider;
     bool _padWanted;
     float _padAlpha;
@@ -144,6 +144,24 @@ internal sealed class GameViewController : UIViewController
             NSUserDefaults.StandardUserDefaults.SetFloat(_padAlpha, "padOpacity");
         };
         _view.AddSubview(_opacitySlider);
+
+        // 패드 배치 편집 (위치/크기를 직접 바꾸고 저장)
+        _editBtn = UIButton.FromType(UIButtonType.System);
+        _editBtn.SetTitle("편집", UIControlState.Normal);
+        _editBtn.SetTitleColor(UIColor.White, UIControlState.Normal);
+        _editBtn.TitleLabel.Font = UIFont.BoldSystemFontOfSize(15);
+        _editBtn.BackgroundColor = PadStyle.C(28, 36, 58, 0.85f);
+        _editBtn.Layer.CornerRadius = 17;
+        _editBtn.Layer.BorderWidth = 2;
+        _editBtn.Layer.BorderColor = PadStyle.Border.CGColor;
+        _editBtn.TouchUpInside += (s, e) =>
+        {
+            _opacitySlider.Hidden = true;
+            _pad.SetEditing(true);
+            ApplyPad();
+        };
+        _view.AddSubview(_editBtn);
+        _pad.EditEnded += ApplyPad;
         ApplyPadAlpha();
 
         // 블루투스 컨트롤러가 연결/해제되면 화면 패드를 숨기거나 되살린다
@@ -159,6 +177,7 @@ internal sealed class GameViewController : UIViewController
         float ui = Math.Max(0.35f, _padAlpha);
         _padToggle.Alpha = ui;
         _opacityBtn.Alpha = ui;
+        _editBtn.Alpha = ui;
     }
 
     void ApplyPad()
@@ -166,9 +185,11 @@ internal sealed class GameViewController : UIViewController
         bool physical = PadInput.HasPhysical;
         bool show = _padWanted && !physical;
         _pad.Show(show);
-        _padToggle.Hidden = physical;
-        _opacityBtn.Hidden = !show;
-        if (!show) _opacitySlider.Hidden = true;
+        bool editing = _pad.Editing;
+        _padToggle.Hidden = physical || editing;
+        _opacityBtn.Hidden = !show || editing;
+        _editBtn.Hidden = !show || editing;
+        if (!show || editing) _opacitySlider.Hidden = true;
         PadInput.SetOverlayActive(show);
     }
 
@@ -177,9 +198,10 @@ internal sealed class GameViewController : UIViewController
         if (_pad == null) return;
         _pad.Frame = _view.Bounds;
         var ins = _view.SafeAreaInsets;
-        nfloat tx = (_view.Bounds.Width - 84) / 2, ty = ins.Top + 6;
+        nfloat tx = (_view.Bounds.Width - 186) / 2, ty = ins.Top + 6;
         _padToggle.Frame = new CGRect(tx, ty, 84, 34);
-        _opacityBtn.Frame = new CGRect(tx + 84 + 8, ty, 34, 34);
+        _opacityBtn.Frame = new CGRect(tx + 92, ty, 34, 34);
+        _editBtn.Frame = new CGRect(tx + 134, ty, 52, 34);
         _opacitySlider.Frame = new CGRect((_view.Bounds.Width - 220) / 2, ty + 34 + 8, 220, 32);
     }
 
