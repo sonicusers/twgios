@@ -18,9 +18,11 @@ internal static class GameRunner
 {
     public static void Run(IosHost host, GameViewController ui)
     {
+        try { File.WriteAllText(LogPath(), ""); } catch (Exception) { }
         Host.LogSink = text =>
         {
             Console.WriteLine(text);
+            FileLog(text);
             if (text.StartsWith("[wog] [form] ", StringComparison.Ordinal))
                 ui.ShowStatus(text.Substring("[wog] [form] ".Length));
         };
@@ -53,6 +55,16 @@ internal static class GameRunner
             ui.ShowStatus("\n오류가 났습니다. 이 화면을 캡처해 보내 주세요.\n\n" +
                 string.Join("\n", ex.ToString().Split('\n').Take(12)), error: true);
         }
+    }
+
+    // 진단용: 게임/shim 로그를 파일 앱 > WogiOS > wog.log 로도 남긴다 (실행할 때마다 새로 씀)
+    static string LogPath() => Path.Combine(NSFileManager.DefaultManager
+        .GetUrls(NSSearchPathDirectory.DocumentDirectory, NSSearchPathDomain.User)[0].Path, "wog.log");
+
+    static void FileLog(string text)
+    {
+        try { File.AppendAllText(LogPath(), DateTime.Now.ToString("HH:mm:ss.fff ") + text + "\n"); }
+        catch (Exception) { }
     }
 
     // GameLauncher.Run 과 같은 동작. 단, iOS 경로 표기(/var vs /private/var) 차이로
