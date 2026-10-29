@@ -1,4 +1,7 @@
 using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.Text;
 using CoreGraphics;
 using Foundation;
 using UIKit;
@@ -24,6 +27,7 @@ internal sealed class PadButton : UIView
 {
     readonly int _bit;
     readonly UILabel _label;
+    readonly float _fontSize;
     int _touches;
     bool _down;
     float _base = 0.8f;
@@ -31,6 +35,7 @@ internal sealed class PadButton : UIView
     public PadButton(string text, int bit, UIColor fill, float fontSize = 20)
     {
         _bit = bit;
+        _fontSize = fontSize;
         MultipleTouchEnabled = true;
         UserInteractionEnabled = true;
         BackgroundColor = fill;
@@ -78,6 +83,8 @@ internal sealed class PadButton : UIView
         _base = a;
         Alpha = _down ? Math.Min(1f, a + 0.3f) : a;
     }
+
+    public void ApplyScale(float scale) => _label.Font = UIFont.BoldSystemFontOfSize(_fontSize * scale);
 
     public void Reset() { _touches = 0; Up(); }
 
@@ -174,39 +181,112 @@ internal sealed class DPadView : UIView
 }
 
 // 게임 화면 위에 올라가는 화면 패드 전체. 버튼이 없는 곳의 터치는 게임으로 그대로 통과시킨다.
+// 편집 모드에서는 모든 터치를 이 뷰가 받아서 요소를 끌어 옮기고(한 손가락) 크기를 바꾼다(두 손가락 벌리기).
 internal sealed class PadOverlay : UIView
 {
-    readonly PadButton _lt, _lb, _rt, _rb, _a, _b, _x, _y, _back, _start;
+    sealed class Slot { public float X, Y, S = 1f; }   // 중심 위치(화면 비율), 크기 배율
+
+    static readonly string[] Ids = { "dpad", "lt", "lb", "rt", "rb", "y", "x", "b", "a", "back", "start" };
+    const string PrefKey = "padLayout";
+
+    readonly Dictionary<string, UIView> _els = new();
+    readonly Dictionary<string, Slot> _slots = new();
     readonly DPadView _dpad;
+    readonly UILabel _hint;
+    readonly UIButton _resetBtn, _doneBtn;
+    bool _editing;
+    string _sel;
+
+    public event Action EditEnded;
+    public bool Editing => _editing;
 
     public PadOverlay()
     {
         BackgroundColor = UIColor.Clear;
         MultipleTouchEnabled = true;
         var navy = PadStyle.C(28, 36, 58);
-        _lt = new PadButton("LT", PadInput.LTrigger, navy);
-        _lb = new PadButton("LB", PadInput.LB, navy);
-        _rt = new PadButton("RT", PadInput.RTrigger, navy);
-        _rb = new PadButton("RB", PadInput.RB, navy);
-        _y = new PadButton("Y", PadInput.BtnY, PadStyle.C(107, 85, 16), 26);
-        _x = new PadButton("X", PadInput.BtnX, PadStyle.C(27, 47, 107), 26);
-        _b = new PadButton("B", PadInput.BtnB, PadStyle.C(122, 28, 28), 26);
-        _a = new PadButton("A", PadInput.BtnA, PadStyle.C(28, 90, 44), 26);
-        _back = new PadButton("◁", PadInput.Back, navy, 22);
-        _start = new PadButton("≡", PadInput.Start, navy, 22);
         _dpad = new DPadView();
-        foreach (var v in new UIView[] { _dpad, _lt, _lb, _rt, _rb, _y, _x, _b, _a, _back, _start }) AddSubview(v);
+        _els["dpad"] = _dpad;
+        _els["lt"] = new PadButton("LT", PadInput.LTrigger, navy);
+        _els["lb"] = new PadButton("LB", PadInput.LB, navy);
+        _els["rt"] = new PadButton("RT", PadInput.RTrigger, navy);
+        _els["rb"] = new PadButton("RB", PadInput.RB, navy);
+        _els["y"] = new PadButton("Y", PadInput.BtnY, PadStyle.C(107, 85, 16), 26);
+        _els["x"] = new PadButton("X", PadInput.BtnX, PadStyle.C(27, 47, 107), 26);
+        _els["b"] = new PadButton("B", PadInput.BtnB, PadStyle.C(122, 28, 28), 26);
+        _els["a"] = new PadButton("A", PadInput.BtnA, PadStyle.C(28, 90, 44), 26);
+        _els["back"] = new PadButton("◁", PadInput.Back, navy, 22);
+        _els["start"] = new PadButton("≡", PadInput.Start, navy, 22);
+        foreach (var id in Ids) AddSubview(_els[id]);
+
+        // 편집 모드 전용 UI
+        _hint = new UILabel
+        {
+            Text = "끌어서 이동 · 두 손가락으로 크기 조절",
+            TextColor = UIColor.White,
+            Font = UIFont.SystemFontOfSize(13),
+            TextAlignment = UITextAlignment.Center,
+            BackgroundColor = PadStyle.C(0, 0, 0, 0.6f),
+            Hidden = true,
+        };
+        _hint.Layer.CornerRadius = 13;
+        _hint.Layer.MasksToBounds = true;
+        AddSubview(_hint);
+
+        _resetBtn = MakeButton("초기화");
+        _doneBtn = MakeButton("완료");
+        _resetBtn.TouchUpInside += (s, e) =>
+        {
+            _slots.Clear();
+            NSUserDefaults.StandardUserDefaults.RemoveObject(PrefKey);
+            SetNeedsLayout();
+        };
+        _doneBtn.TouchUpInside += (s, e) =>
+        {
+            SetEditing(false);
+            EditEnded?.Invoke();
+        };
+        AddSubview(_resetBtn);
+        AddSubview(_doneBtn);
+
+        var pan = new UIPanGestureRecognizer(OnPan) { MaximumNumberOfTouches = 1 };
+        var pinch = new UIPinchGestureRecognizer(OnPinch);
+        var tap = new UITapGestureRecognizer(OnTap);
+        foreach (UIGestureRecognizer g in new UIGestureRecognizer[] { pan, pinch, tap })
+        {
+            g.ShouldReceiveTouch = (r, t) => _editing && !(t.View is UIButton);
+            AddGestureRecognizer(g);
+        }
+
+        Load();
+    }
+
+    static UIButton MakeButton(string title)
+    {
+        var b = UIButton.FromType(UIButtonType.System);
+        b.SetTitle(title, UIControlState.Normal);
+        b.SetTitleColor(UIColor.White, UIControlState.Normal);
+        b.TitleLabel.Font = UIFont.BoldSystemFontOfSize(15);
+        b.BackgroundColor = PadStyle.C(28, 36, 58, 0.9f);
+        b.Layer.CornerRadius = 17;
+        b.Layer.BorderWidth = 2;
+        b.Layer.BorderColor = PadStyle.Border.CGColor;
+        b.Hidden = true;
+        return b;
     }
 
     public override UIView HitTest(CGPoint point, UIEvent uievent)
     {
         var v = base.HitTest(point, uievent);
-        return v == this ? null : v;
+        if (!_editing) return v == this ? null : v;
+        // 편집 중에는 패드 버튼이 눌리지 않게 모든 터치를 이 뷰가 받는다 (초기화/완료 버튼만 예외)
+        return v is UIButton ? v : this;
     }
 
     public void SetOpacity(float a)
     {
-        foreach (var b in new[] { _lt, _lb, _rt, _rb, _a, _b, _x, _y, _back, _start }) b.SetBaseAlpha(a);
+        foreach (var v in _els.Values)
+            if (v is PadButton b) b.SetBaseAlpha(a);
         _dpad.Alpha = Math.Min(1f, a / 0.8f);
     }
 
@@ -214,40 +294,222 @@ internal sealed class PadOverlay : UIView
     {
         Hidden = !on;
         if (on) return;
-        foreach (var b in new[] { _lt, _lb, _rt, _rb, _a, _b, _x, _y, _back, _start }) b.Reset();
+        SetEditing(false);
+        ReleaseAllElements();
+    }
+
+    void ReleaseAllElements()
+    {
+        foreach (var v in _els.Values)
+            if (v is PadButton b) b.Reset();
         _dpad.Reset();
         PadInput.ReleaseAll();
+    }
+
+    public void SetEditing(bool on)
+    {
+        if (_editing == on) return;
+        _editing = on;
+        if (on) ReleaseAllElements();
+        else { Select(null); Save(); }
+        _hint.Hidden = _resetBtn.Hidden = _doneBtn.Hidden = !on;
+    }
+
+    // ---- 선택 / 편집 ----
+    void Select(string id)
+    {
+        if (_sel != null) Highlight(_sel, false);
+        _sel = id;
+        if (_sel != null) Highlight(_sel, true);
+    }
+
+    void Highlight(string id, bool on)
+    {
+        var v = _els[id];
+        if (on)
+        {
+            v.Layer.BorderColor = PadStyle.C(255, 220, 60).CGColor;
+            v.Layer.BorderWidth = 5;
+        }
+        else
+        {
+            v.Layer.BorderColor = PadStyle.Border.CGColor;
+            v.Layer.BorderWidth = v is PadButton ? 3 : 0;
+        }
+    }
+
+    string ElementAt(CGPoint p)
+    {
+        string best = null;
+        double bd = double.MaxValue;
+        foreach (var id in Ids)
+        {
+            var v = _els[id];
+            var f = v.Frame;
+            var padded = new CGRect(f.X - 12, f.Y - 12, f.Width + 24, f.Height + 24);
+            if (!padded.Contains(p)) continue;
+            double dx = v.Center.X - p.X, dy = v.Center.Y - p.Y;
+            double d = dx * dx + dy * dy;
+            if (d < bd) { bd = d; best = id; }
+        }
+        return best;
+    }
+
+    Slot EnsureSlot(string id)
+    {
+        if (!_slots.TryGetValue(id, out var s))
+        {
+            var c = _els[id].Center;
+            s = new Slot { X = (float)(c.X / Bounds.Width), Y = (float)(c.Y / Bounds.Height), S = 1f };
+            _slots[id] = s;
+        }
+        return s;
+    }
+
+    void OnTap(UITapGestureRecognizer g)
+    {
+        if (!_editing) return;
+        Select(ElementAt(g.LocationInView(this)));
+    }
+
+    void OnPan(UIPanGestureRecognizer g)
+    {
+        if (!_editing) return;
+        var tr = g.TranslationInView(this);
+        switch (g.State)
+        {
+            case UIGestureRecognizerState.Began:
+                var p = g.LocationInView(this);
+                // 인식이 시작된 위치가 아니라 처음 손가락을 댄 위치로 요소를 찾는다
+                var start = new CGPoint(p.X - tr.X, p.Y - tr.Y);
+                var id = ElementAt(start);
+                if (id != null) Select(id);
+                break;
+            case UIGestureRecognizerState.Changed:
+                if (_sel == null) break;
+                var s = EnsureSlot(_sel);
+                s.X = Math.Clamp(s.X + (float)(tr.X / Bounds.Width), 0.02f, 0.98f);
+                s.Y = Math.Clamp(s.Y + (float)(tr.Y / Bounds.Height), 0.02f, 0.98f);
+                g.SetTranslation(new CGPoint(0, 0), this);
+                SetNeedsLayout();
+                break;
+            case UIGestureRecognizerState.Ended:
+            case UIGestureRecognizerState.Cancelled:
+                Save();
+                break;
+        }
+    }
+
+    void OnPinch(UIPinchGestureRecognizer g)
+    {
+        if (!_editing) return;
+        switch (g.State)
+        {
+            case UIGestureRecognizerState.Began:
+                var id = ElementAt(g.LocationInView(this));
+                if (id != null) Select(id);
+                break;
+            case UIGestureRecognizerState.Changed:
+                if (_sel == null) break;
+                var s = EnsureSlot(_sel);
+                s.S = Math.Clamp(s.S * (float)g.Scale, 0.5f, 2.5f);
+                g.Scale = 1;
+                SetNeedsLayout();
+                break;
+            case UIGestureRecognizerState.Ended:
+            case UIGestureRecognizerState.Cancelled:
+                Save();
+                break;
+        }
+    }
+
+    // ---- 저장 / 불러오기 ----
+    void Save()
+    {
+        var sb = new StringBuilder();
+        var ci = CultureInfo.InvariantCulture;
+        foreach (var kv in _slots)
+            sb.Append(kv.Key).Append(':')
+              .Append(kv.Value.X.ToString("0.####", ci)).Append(',')
+              .Append(kv.Value.Y.ToString("0.####", ci)).Append(',')
+              .Append(kv.Value.S.ToString("0.###", ci)).Append(';');
+        NSUserDefaults.StandardUserDefaults.SetString(sb.ToString(), PrefKey);
+    }
+
+    void Load()
+    {
+        var str = NSUserDefaults.StandardUserDefaults.StringForKey(PrefKey);
+        if (string.IsNullOrEmpty(str)) return;
+        var ci = CultureInfo.InvariantCulture;
+        foreach (var part in str.Split(';', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var kv = part.Split(':');
+            if (kv.Length != 2 || !_els.ContainsKey(kv[0])) continue;
+            var n = kv[1].Split(',');
+            if (n.Length != 3) continue;
+            if (float.TryParse(n[0], NumberStyles.Float, ci, out var x) &&
+                float.TryParse(n[1], NumberStyles.Float, ci, out var y) &&
+                float.TryParse(n[2], NumberStyles.Float, ci, out var sc))
+                _slots[kv[0]] = new Slot { X = Math.Clamp(x, 0.02f, 0.98f), Y = Math.Clamp(y, 0.02f, 0.98f), S = Math.Clamp(sc, 0.5f, 2.5f) };
+        }
+    }
+
+    // ---- 배치 ----
+    // 기본 배치 (저장된 값이 없는 요소에 쓴다)
+    Dictionary<string, CGRect> Defaults()
+    {
+        var d = new Dictionary<string, CGRect>();
+        var ins = SafeAreaInsets;
+        nfloat w = Bounds.Width, h = Bounds.Height, m = 20;
+        nfloat l = ins.Left + m, r = w - ins.Right - m, t = ins.Top + m, bt = h - ins.Bottom - m;
+
+        nfloat bw = 88, bh = 46, gap = 10;
+        d["lt"] = new CGRect(l, t, bw, bh);
+        d["lb"] = new CGRect(l, t + bh + gap, bw, bh);
+        d["rt"] = new CGRect(r - bw, t, bw, bh);
+        d["rb"] = new CGRect(r - bw, t + bh + gap, bw, bh);
+
+        nfloat ds = 150;
+        d["dpad"] = new CGRect(l + 10, bt - ds, ds, ds);
+
+        nfloat db = 58, rad = 46;
+        nfloat cx = r - db / 2 - rad - 4, cy = bt - db / 2 - rad - 4;
+        d["y"] = new CGRect(cx - db / 2, cy - rad - db / 2, db, db);
+        d["a"] = new CGRect(cx - db / 2, cy + rad - db / 2, db, db);
+        d["x"] = new CGRect(cx - rad - db / 2, cy - db / 2, db, db);
+        d["b"] = new CGRect(cx + rad - db / 2, cy - db / 2, db, db);
+
+        nfloat sw = 60, sh = 42;
+        d["back"] = new CGRect(w / 2 - 110 - sw / 2, bt - sh, sw, sh);
+        d["start"] = new CGRect(w / 2 + 110 - sw / 2, bt - sh, sw, sh);
+        return d;
     }
 
     public override void LayoutSubviews()
     {
         base.LayoutSubviews();
+        var def = Defaults();
+        foreach (var id in Ids)
+        {
+            var v = _els[id];
+            var f = def[id];
+            float scale = 1f;
+            if (_slots.TryGetValue(id, out var sl))
+            {
+                scale = sl.S;
+                nfloat w = f.Width * sl.S, h = f.Height * sl.S;
+                nfloat cx = sl.X * Bounds.Width, cy = sl.Y * Bounds.Height;
+                f = new CGRect(cx - w / 2, cy - h / 2, w, h);
+            }
+            v.Frame = f;
+            if (v is PadButton pb) pb.ApplyScale(scale);
+        }
+
         var ins = SafeAreaInsets;
-        nfloat w = Bounds.Width, h = Bounds.Height, m = 20;
-        nfloat l = ins.Left + m, r = w - ins.Right - m, t = ins.Top + m, bt = h - ins.Bottom - m;
-
-        // 숄더/트리거 (왼쪽 위 LT 위, LB 아래 / 오른쪽 위 RT 위, RB 아래)
-        nfloat bw = 88, bh = 46, gap = 10;
-        _lt.Frame = new CGRect(l, t, bw, bh);
-        _lb.Frame = new CGRect(l, t + bh + gap, bw, bh);
-        _rt.Frame = new CGRect(r - bw, t, bw, bh);
-        _rb.Frame = new CGRect(r - bw, t + bh + gap, bw, bh);
-
-        // 방향키 (왼쪽 아래)
-        nfloat ds = 150;
-        _dpad.Frame = new CGRect(l + 10, bt - ds, ds, ds);
-
-        // XYAB (오른쪽 아래, 마름모 배치)
-        nfloat d = 58, rad = 46;
-        nfloat cx = r - d / 2 - rad - 4, cy = bt - d / 2 - rad - 4;
-        _y.Frame = new CGRect(cx - d / 2, cy - rad - d / 2, d, d);
-        _a.Frame = new CGRect(cx - d / 2, cy + rad - d / 2, d, d);
-        _x.Frame = new CGRect(cx - rad - d / 2, cy - d / 2, d, d);
-        _b.Frame = new CGRect(cx + rad - d / 2, cy - d / 2, d, d);
-
-        // Back / Start (아래 가운데 양옆)
-        nfloat sw = 60, sh = 42;
-        _back.Frame = new CGRect(w / 2 - 110 - sw / 2, bt - sh, sw, sh);
-        _start.Frame = new CGRect(w / 2 + 110 - sw / 2, bt - sh, sw, sh);
+        nfloat ty = ins.Top + 6;
+        nfloat bwid = Bounds.Width;
+        _resetBtn.Frame = new CGRect(bwid / 2 - 78, ty, 72, 34);
+        _doneBtn.Frame = new CGRect(bwid / 2 + 6, ty, 72, 34);
+        _hint.Frame = new CGRect((bwid - 300) / 2, ty + 42, 300, 26);
     }
 }
