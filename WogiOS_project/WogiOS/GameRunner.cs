@@ -60,6 +60,8 @@ internal static class GameRunner
     static void Launch(GameLayout layout)
     {
         string patched = GameLauncher.Prepare(layout, Host.Log);
+        // BGM(Bink) 디코딩을 앱 본체(AOT)의 FastBink 로 연결 — 인터프리터로 곡 전체를 푸느라 생기던 지연을 없앤다
+        BinkHook.Apply(Path.Combine(patched, "WarOfGenesis.Assets.dll"), Host.Log);
         Directory.CreateDirectory(layout.SaveDir);
         Environment.SetEnvironmentVariable("DUELDX_SAVEDIR", layout.SaveDir);
         if (layout.AssetsDir != null)
