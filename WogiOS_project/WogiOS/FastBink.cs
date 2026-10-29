@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Numerics;
+using System.Runtime.InteropServices;
 
 namespace WogiOS;
 
@@ -24,6 +26,25 @@ public static class FastBink
         int frameCount, int audioTracks, bool useDct)
     {
         if (useDct || data == null || framePos == null || channels < 1) return null;
+
+        // 이미 디코딩해 둔 곡이면 파일에서 바로 읽는다 (앱을 껐다 켜도 남아 있음)
+        string cachePath = null;
+        try
+        {
+            var sw0 = Stopwatch.StartNew();
+            cachePath = CachePath(data, framePos, sampleRate, channels, frameCount, audioTracks);
+            short[] hit = ReadCache(cachePath, sampleRate, channels);
+            if (hit != null)
+            {
+                Log("bink cache hit: " + hit.Length + " samples, " + sw0.ElapsedMilliseconds + " ms");
+                return hit;
+            }
+        }
+        catch (Exception ex)
+        {
+            Log("bink cache read failed: " + ex.GetType().Name + ": " + ex.Message);
+        }
+
         try
         {
             var sw = Stopwatch.StartNew();
@@ -45,12 +66,100 @@ public static class FastBink
             var result = new short[n];
             Array.Copy(buf.Arr, result, (int)n);
             Log("bink fast: " + n + " samples, " + sampleRate + "Hz x" + channels + ", " + sw.ElapsedMilliseconds + " ms");
+            WriteCache(cachePath, result, sampleRate, channels);
             return result;
         }
         catch (Exception ex)
         {
             Log("bink fast FAILED, falling back: " + ex.GetType().Name + ": " + ex.Message);
             return null;
+        }
+    }
+
+    // ---- 디코딩 결과 캐시 -------------------------------------------------
+    // Library/Caches/bink/<키>.pcm  (헤더 5개 int: 표식, 버전, 주파수, 채널, 샘플 수 + short 샘플)
+    // 곡 데이터가 바뀌면 키가 달라지므로 낡은 캐시를 읽을 일이 없다. iOS 가 용량이 모자라면 비울 수 있고,
+    // 그러면 그 곡은 다시 한 번 디코딩해서 채운다.
+    const int CacheMagic = 0x4B4E4942; // "BINK"
+    const int CacheVersion = 1;
+    const int HeaderBytes = 20;
+
+    static string CacheDir()
+    {
+        string docs = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        return Path.GetFullPath(Path.Combine(docs, "..", "Library", "Caches", "bink"));
+    }
+
+    // 곡 전체를 훑으면 느리므로 길이/프레임 위치 전부 + 데이터 일부(드문드문)만 섞어 키를 만든다
+    static string CachePath(byte[] data, int[] framePos, int sampleRate, int channels, int frameCount, int audioTracks)
+    {
+        ulong h = 14695981039346656037UL;
+        h = Mix(h, (ulong)data.Length); h = Mix(h, (ulong)sampleRate); h = Mix(h, (ulong)channels);
+        h = Mix(h, (ulong)frameCount); h = Mix(h, (ulong)audioTracks);
+        for (int i = 0; i < framePos.Length; i++) h = Mix(h, (ulong)framePos[i]);
+        int head = Math.Min(data.Length, 1024);
+        for (int i = 0; i < head; i++) h = Mix(h, data[i]);
+        int tailStart = Math.Max(head, data.Length - 1024);
+        for (int i = tailStart; i < data.Length; i++) h = Mix(h, data[i]);
+        int step = Math.Max(1, data.Length / 8192);
+        for (int i = head; i < tailStart; i += step) h = Mix(h, data[i]);
+        return Path.Combine(CacheDir(), "v" + CacheVersion + "_" + h.ToString("x16") + "_" + data.Length + ".pcm");
+    }
+
+    static ulong Mix(ulong h, ulong v)
+    {
+        h ^= v;
+        return h * 1099511628211UL;
+    }
+
+    static short[] ReadCache(string path, int sampleRate, int channels)
+    {
+        if (path == null || !File.Exists(path)) return null;
+        using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            var head = new byte[HeaderBytes];
+            if (fs.Read(head, 0, HeaderBytes) != HeaderBytes) return null;
+            if (BitConverter.ToInt32(head, 0) != CacheMagic || BitConverter.ToInt32(head, 4) != CacheVersion) return null;
+            if (BitConverter.ToInt32(head, 8) != sampleRate || BitConverter.ToInt32(head, 12) != channels) return null;
+            int count = BitConverter.ToInt32(head, 16);
+            if (count < 0 || fs.Length != HeaderBytes + (long)count * 2) return null;
+            var result = new short[count];
+            var bytes = MemoryMarshal.AsBytes(result.AsSpan());
+            int got = 0;
+            while (got < bytes.Length)
+            {
+                int r = fs.Read(bytes.Slice(got));
+                if (r <= 0) return null;
+                got += r;
+            }
+            return result;
+        }
+    }
+
+    static void WriteCache(string path, short[] samples, int sampleRate, int channels)
+    {
+        if (path == null) return;
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path));
+            string tmp = path + ".tmp";
+            using (var fs = new FileStream(tmp, FileMode.Create, FileAccess.Write))
+            {
+                var head = new byte[HeaderBytes];
+                BitConverter.TryWriteBytes(new Span<byte>(head, 0, 4), CacheMagic);
+                BitConverter.TryWriteBytes(new Span<byte>(head, 4, 4), CacheVersion);
+                BitConverter.TryWriteBytes(new Span<byte>(head, 8, 4), sampleRate);
+                BitConverter.TryWriteBytes(new Span<byte>(head, 12, 4), channels);
+                BitConverter.TryWriteBytes(new Span<byte>(head, 16, 4), samples.Length);
+                fs.Write(head, 0, HeaderBytes);
+                fs.Write(MemoryMarshal.AsBytes(samples.AsSpan()));
+            }
+            File.Move(tmp, path, true);
+            Log("bink cache saved: " + samples.Length + " samples");
+        }
+        catch (Exception ex)
+        {
+            Log("bink cache write failed: " + ex.GetType().Name + ": " + ex.Message);
         }
     }
 
