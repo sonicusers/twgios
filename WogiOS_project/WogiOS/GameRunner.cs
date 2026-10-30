@@ -79,6 +79,13 @@ internal static class GameRunner
         BinkHook.Apply(Path.Combine(patched, "WarOfGenesis.Assets.dll"), Host.Log);
         Directory.CreateDirectory(layout.SaveDir);
         Environment.SetEnvironmentVariable("DUELDX_SAVEDIR", layout.SaveDir);
+        // 앞서 고른 원본 파트2 폴더가 있으면 게임에 알려 준다 (3버튼 창을 건너뛴다)
+        string part2 = IosHost.RestorePart2Folder();
+        if (part2 != null)
+        {
+            Environment.SetEnvironmentVariable("WAROFGENESIS_ORIGINAL", part2);
+            Host.Log("original part2 folder: " + part2);
+        }
         if (layout.AssetsDir != null)
             Environment.SetEnvironmentVariable("WAROFGENESIS_ASSETS", layout.AssetsDir);
         string rel = layout.ReleaseDir.EndsWith(Path.DirectorySeparatorChar)
