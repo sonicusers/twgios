@@ -2,4 +2,4 @@
 <img width="850" height="392" alt="1793252683 (1)" src="https://github.com/user-attachments/assets/f8d88bb8-d3b6-4b25-901f-f16575fdc5f4" />
 
 # twgios
-g3p2
+창세기전 IOS포팅입니다.
