@@ -165,20 +165,22 @@ internal sealed unsafe class IosHost : IHost
     }
 
     // 게임 스레드에서 불린다. 안내 창을 띄운 뒤 파일 앱의 폴더 선택 화면을 열고, 고른 폴더 경로를 돌려준다. 취소하면 null
+    // 게임이 "파트1 폴더"를 요청하면, PC 판처럼 파트2 / 파트1 중에서 고를 수 있게 버튼을 나눠 보여 준다.
     public string PickFolder(string description)
     {
         Host.LogSink("[pick] " + description);
         if (NSThread.IsMain) return null;
         string result = null;
         using var done = new ManualResetEventSlim(false);
+        bool offerBoth = description != null && description.Contains("파트1");
         UIApplication.SharedApplication.InvokeOnMainThread(() =>
         {
             var root = UIApplication.SharedApplication.KeyWindow?.RootViewController;
             if (root == null) { done.Set(); return; }
-            var alert = UIAlertController.Create("폴더 선택", description, UIAlertControllerStyle.Alert);
-            alert.AddAction(UIAlertAction.Create("폴더 고르기", UIAlertActionStyle.Default, _ =>
+
+            // 폴더(public.folder)를 고르는 파일 앱 화면
+            void OpenPicker(string which)
             {
-                // 폴더(public.folder)를 고르는 파일 앱 화면
                 var picker = new UIDocumentPickerViewController(new[] { "public.folder" }, UIDocumentPickerMode.Open);
                 picker.AllowsMultipleSelection = false;
                 picker.DidPickDocumentAtUrls += (s, e) =>
@@ -189,13 +191,30 @@ internal sealed unsafe class IosHost : IHost
                         Scoped.Add(url);
                         SaveBookmark(url);
                         result = url.Path;
+                        Host.LogSink("[pick] " + which + " -> " + result);
                     }
                     done.Set();
                 };
                 picker.WasCancelled += (s, e) => done.Set();
                 root.PresentViewController(picker, true, null);
-            }));
-            alert.AddAction(UIAlertAction.Create("취소", UIAlertActionStyle.Cancel, _ => done.Set()));
+            }
+
+            string title = offerBoth ? "원본 폴더 선택" : "폴더 선택";
+            string body = offerBoth
+                ? "원본 파트2 가 있으면 파트2 폴더(TXR · Chr · Obs 가 든 곳)를,\n파트2 없이 파트1 만 있으면 파트1 폴더(Chars · Obss · Btls 가 든 곳)를 고르세요.\n\n원본 폴더에는 아무것도 쓰지 않습니다."
+                : description;
+            var alert = UIAlertController.Create(title, body, UIAlertControllerStyle.Alert);
+            if (offerBoth)
+            {
+                alert.AddAction(UIAlertAction.Create("파트2 폴더 고르기", UIAlertActionStyle.Default, _ => OpenPicker("part2")));
+                alert.AddAction(UIAlertAction.Create("파트1 폴더 고르기", UIAlertActionStyle.Default, _ => OpenPicker("part1")));
+                alert.AddAction(UIAlertAction.Create("끝내기", UIAlertActionStyle.Cancel, _ => done.Set()));
+            }
+            else
+            {
+                alert.AddAction(UIAlertAction.Create("폴더 고르기", UIAlertActionStyle.Default, _ => OpenPicker("folder")));
+                alert.AddAction(UIAlertAction.Create("취소", UIAlertActionStyle.Cancel, _ => done.Set()));
+            }
             root.PresentViewController(alert, true, null);
         });
         done.Wait();
