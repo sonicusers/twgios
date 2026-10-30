@@ -164,6 +164,36 @@ internal sealed unsafe class IosHost : IHost
         d.SetString(string.Join("\n", list), BookmarkKey);
     }
 
+    // ---- 원본 파트2 폴더 (게임의 3버튼 창을 iOS 에서 고를 수 없어서, 앱이 대신 기억해 두었다가 환경 변수로 알려 준다) ----
+    const string Part2Key = "part2FolderBookmark";
+
+    // 지난번에 고른 파트2 폴더의 접근 권한을 되살리고 경로를 돌려준다. 없으면 null
+    public static string RestorePart2Folder()
+    {
+        var b64 = NSUserDefaults.StandardUserDefaults.StringForKey(Part2Key);
+        if (string.IsNullOrEmpty(b64)) return null;
+        try
+        {
+            var data = NSData.FromArray(Convert.FromBase64String(b64));
+            var url = NSUrl.FromBookmarkData(data, (NSUrlBookmarkResolutionOptions)0, null, out bool stale, out NSError err);
+            if (url != null && url.StartAccessingSecurityScopedResource())
+            {
+                Scoped.Add(url);
+                return url.Path;
+            }
+        }
+        catch (FormatException) { }
+        return null;
+    }
+
+    static void SavePart2Bookmark(NSUrl url)
+    {
+        var bm = url.CreateBookmarkData((NSUrlBookmarkCreationOptions)0, null, null, out NSError err);
+        if (bm == null) return;
+        NSUserDefaults.StandardUserDefaults.SetString(Convert.ToBase64String(bm.ToArray()), Part2Key);
+        NSUserDefaults.StandardUserDefaults.Synchronize();
+    }
+
     // 게임 스레드에서 불린다. 안내 창을 띄운 뒤 파일 앱의 폴더 선택 화면을 열고, 고른 폴더 경로를 돌려준다. 취소하면 null
     // 게임이 "파트1 폴더"를 요청하면, PC 판처럼 파트2 / 파트1 중에서 고를 수 있게 버튼을 나눠 보여 준다.
     public string PickFolder(string description)
@@ -189,6 +219,18 @@ internal sealed unsafe class IosHost : IHost
                     if (url != null && url.StartAccessingSecurityScopedResource())
                     {
                         Scoped.Add(url);
+                        if (which == "part2")
+                        {
+                            // 게임은 이 시점에 이미 파트1 흐름이라 경로를 넘겨도 거절한다.
+                            // 대신 저장해 두고, 다음 실행 때 WAROFGENESIS_ORIGINAL 로 알려 준다.
+                            SavePart2Bookmark(url);
+                            Host.LogSink("[pick] part2 saved -> " + url.Path);
+                            var ok = UIAlertController.Create("파트2 폴더를 저장했어요",
+                                "앱을 종료합니다. 다시 실행하면 이 폴더로 시작해요.", UIAlertControllerStyle.Alert);
+                            ok.AddAction(UIAlertAction.Create("확인", UIAlertActionStyle.Default, _ => Environment.Exit(0)));
+                            root.PresentViewController(ok, true, null);
+                            return;
+                        }
                         SaveBookmark(url);
                         result = url.Path;
                         Host.LogSink("[pick] " + which + " -> " + result);
