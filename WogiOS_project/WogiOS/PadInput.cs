@@ -2,6 +2,7 @@ using System;
 using System.Threading;
 using GameController;
 using WogShim.Win32;
+using WinMessages = WogShim.Win32.Messages;
 
 namespace WogiOS;
 
@@ -18,6 +19,33 @@ internal static class PadInput
     // 트리거는 XInput 버튼 비트가 아니라서 위쪽 비트를 따로 쓴다
     public const int LTrigger = 1 << 16, RTrigger = 1 << 17;
 
+    // true: 화면 패드를 키보드 입력으로 게임에 보낸다 (게임이 컨트롤러를 인식하지 않아 컨트롤러용 선택 박스가 안 뜸)
+    // false: 기존 방식 (XInput 컨트롤러로 전달)
+    public static bool KeyMode = true;
+
+    // 패드 버튼 -> 키보드 가상 키 코드. 게임이 쓰는 키에 맞춰 바꿔야 하는 임시 값이다.
+    static readonly (int bit, int vk)[] KeyMap =
+    {
+        (DUp, 0x26), (DDown, 0x28), (DLeft, 0x25), (DRight, 0x27), // 방향키
+        (BtnA, 0x0D),   // A  -> Enter
+        (BtnB, 0x1B),   // B  -> Esc
+        (BtnX, 0x20),   // X  -> Space
+        (BtnY, 0x09),   // Y  -> Tab
+        (Start, 0x77),  // ≡  -> F8 (임시)
+        (Back, 0x08),   // ◁  -> Backspace
+        (LB, 0x51),     // LB -> Q
+        (RB, 0x45),     // RB -> E
+    };
+
+    static void SendKeys(int oldBits, int newBits)
+    {
+        int ch = oldBits ^ newBits;
+        foreach (var (bit, vk) in KeyMap)
+            if ((ch & bit) != 0) WinMessages.PostKey(vk, (newBits & bit) != 0);
+    }
+
+    static bool UseKeys => KeyMode && !HasPhysical;
+
     static int _bits;          // 화면 패드가 누르고 있는 버튼들
     static bool _overlayOn;    // 화면 패드가 보이는 중인가
     static uint _packet;
@@ -29,9 +57,14 @@ internal static class PadInput
         int o, n;
         do { o = Volatile.Read(ref _bits); n = (o & ~clear) | set; }
         while (Interlocked.CompareExchange(ref _bits, n, o) != o);
+        if (UseKeys) SendKeys(o, n);
     }
 
-    public static void ReleaseAll() => Volatile.Write(ref _bits, 0);
+    public static void ReleaseAll()
+    {
+        int o = Interlocked.Exchange(ref _bits, 0);
+        if (KeyMode) SendKeys(o, 0);
+    }
 
     public static bool HasPhysical => FindPhysical() != null;
 
@@ -43,7 +76,7 @@ internal static class PadInput
     }
 
     // 화면 패드가 보이거나 실제 컨트롤러가 있으면 연결된 것으로, 아니면 연결 안 됨으로 알린다
-    public static void Refresh() => XInput.Poll = (_overlayOn || HasPhysical) ? PollFn : null;
+    public static void Refresh() => XInput.Poll = (HasPhysical || (_overlayOn && !KeyMode)) ? PollFn : null;
 
     static GCExtendedGamepad FindPhysical()
     {
