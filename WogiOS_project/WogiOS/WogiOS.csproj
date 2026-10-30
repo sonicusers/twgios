@@ -6,7 +6,7 @@
     <SupportedOSPlatformVersion>15.0</SupportedOSPlatformVersion>
     <ApplicationId>com.wogios.app</ApplicationId>
     <ApplicationTitle>WarOfGenesis</ApplicationTitle>
-    <ApplicationDisplayVersion>1.0.2</ApplicationDisplayVersion>
+    <ApplicationDisplayVersion>1.0.3</ApplicationDisplayVersion>
     <ApplicationVersion>1</ApplicationVersion>
     <Nullable>disable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
