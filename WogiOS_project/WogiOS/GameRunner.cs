@@ -6,6 +6,7 @@ using System.Reflection;
 using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Loader;
+using System.Threading;
 using System.Threading.Tasks;
 using Foundation;
 using UIKit;
@@ -49,6 +50,7 @@ internal static class GameRunner
             Host.Use(host);
             Launch(layout);
             Host.Log("game exited");
+            QuitApp();
         }
         catch (Exception ex)
         {
@@ -57,6 +59,14 @@ internal static class GameRunner
             ui.ShowStatus("\n오류가 났습니다. 이 화면을 캡처해 보내 주세요.\n\n" +
                 string.Join("\n", ex.ToString().Split('\n').Take(12)), error: true);
         }
+    }
+
+    // 타이틀의 EXIT 를 누르면 게임의 Main 이 끝나고 게임 스레드만 종료된다.
+    // 그러면 화면에는 마지막으로 그린 프레임(타이틀)이 멈춘 채 남아 "종료가 안 되는" 것처럼 보이므로 앱 자체를 끝낸다.
+    static void QuitApp()
+    {
+        Thread.Sleep(300); // wog.log 에 마지막 줄이 기록될 시간
+        Environment.Exit(0);
     }
 
     // 진단용: 게임/shim 로그를 파일 앱 > WogiOS > wog.log 로도 남긴다 (실행할 때마다 새로 씀)

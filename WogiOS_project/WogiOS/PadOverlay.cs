@@ -211,10 +211,10 @@ internal sealed class PadOverlay : UIView
         _els["lb"] = new PadButton("LB", PadInput.LB, navy);
         _els["rt"] = new PadButton("RT", PadInput.RTrigger, navy);
         _els["rb"] = new PadButton("RB", PadInput.RB, navy);
-        _els["y"] = new PadButton("Y", PadInput.BtnY, PadStyle.C(107, 85, 16), 26);
-        _els["x"] = new PadButton("X", PadInput.BtnX, PadStyle.C(27, 47, 107), 26);
-        _els["b"] = new PadButton("B", PadInput.BtnB, PadStyle.C(122, 28, 28), 26);
-        _els["a"] = new PadButton("A", PadInput.BtnA, PadStyle.C(28, 90, 44), 26);
+        _els["y"] = new PadButton("Y", PadInput.BtnY, navy, 26);
+        _els["x"] = new PadButton("X", PadInput.BtnX, navy, 26);
+        _els["b"] = new PadButton("B", PadInput.BtnB, navy, 26);
+        _els["a"] = new PadButton("A", PadInput.BtnA, navy, 26);
         _els["back"] = new PadButton("◁", PadInput.Back, navy, 22);
         _els["start"] = new PadButton("≡", PadInput.Start, navy, 22);
         foreach (var id in Ids) AddSubview(_els[id]);
