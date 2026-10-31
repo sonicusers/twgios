@@ -508,19 +508,22 @@ internal sealed class PadOverlay : UIView
         d["rt"] = new CGRect(r - bw, t, bw, bh);
         d["rb"] = new CGRect(r - bw, t + bh + gap, bw, bh);
 
+        // 상태/시스템 버튼은 십자키·A 버튼 바로 아래에 둔다. 그만큼 위쪽을 비워 둔다.
+        nfloat sw = 54, sh = 22, sgap = 8;
+        nfloat low = sh + sgap;
+
         nfloat ds = 150;
-        d["dpad"] = new CGRect(l + 10, bt - ds, ds, ds);
+        d["dpad"] = new CGRect(l + 10, bt - low - ds, ds, ds);
 
         nfloat db = 58, rad = 46;
-        nfloat cx = r - db / 2 - rad - 4, cy = bt - db / 2 - rad - 4;
+        nfloat cx = r - db / 2 - rad - 4, cy = bt - low - db / 2 - rad - 4;
         d["y"] = new CGRect(cx - db / 2, cy - rad - db / 2, db, db);
         d["a"] = new CGRect(cx - db / 2, cy + rad - db / 2, db, db);
         d["x"] = new CGRect(cx - rad - db / 2, cy - db / 2, db, db);
         d["b"] = new CGRect(cx + rad - db / 2, cy - db / 2, db, db);
 
-        nfloat sw = 54, sh = 22;
-        d["back"] = new CGRect(w / 2 - 110 - sw / 2, bt - sh, sw, sh);
-        d["start"] = new CGRect(w / 2 + 110 - sw / 2, bt - sh, sw, sh);
+        d["back"] = new CGRect(l + 10 + ds / 2 - sw / 2, bt - sh, sw, sh);   // 십자키 아래
+        d["start"] = new CGRect(cx - sw / 2, bt - sh, sw, sh);              // A 버튼 아래
         return d;
     }
 
