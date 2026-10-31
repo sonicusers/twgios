@@ -83,10 +83,14 @@ internal static class GameRunner
     // 실패하던 "패치본인지 확인" 부분만 느슨하게 바꿨다.
     static void Launch(GameLayout layout)
     {
+        // 안내줄 패치 방식이 바뀐 뒤 처음 실행이면 옛 patched 폴더를 한 번 비워 다시 만들게 한다
+        CapHook.ResetIfOutdated(layout.PatchedDir, Host.Log);
         string patched = GameLauncher.Prepare(layout, Host.Log);
         MarkPatchedVersion(layout);
         // BGM(Bink) 디코딩을 앱 본체(AOT)의 FastBink 로 연결 — 인터프리터로 곡 전체를 푸느라 생기던 지연을 없앤다
         BinkHook.Apply(Path.Combine(patched, "WarOfGenesis.Assets.dll"), Host.Log);
+        // 하단 안내줄의 색 알약 아이콘을 속이 빈 모양(글자만)으로
+        CapHook.Apply(Path.Combine(patched, "WarOfGenesis.dll"), Host.Log);
         Directory.CreateDirectory(layout.SaveDir);
         Environment.SetEnvironmentVariable("DUELDX_SAVEDIR", layout.SaveDir);
         // 앞서 고른 원본 파트2 폴더가 있으면 게임에 알려 준다 (3버튼 창을 건너뛴다)
