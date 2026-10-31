@@ -42,9 +42,9 @@ internal sealed class GameViewController : UIViewController
     GameView _view;
     UILabel _status;
     PadOverlay _pad;
-    UIButton _padToggle, _opacityBtn, _editBtn, _hideBtn;
+    UIButton _padToggle, _opacityBtn, _editBtn;
     UISlider _opacitySlider;
-    bool _padWanted, _menuOpen, _sliderOpen;
+    bool _padWanted;
     float _padAlpha;
     Thread _game;
     static readonly Queue<string> Lines = new();
@@ -106,8 +106,8 @@ internal sealed class GameViewController : UIViewController
         _padToggle.Layer.BorderColor = PadStyle.Border.CGColor;
         _padToggle.TouchUpInside += (s, e) =>
         {
-            _menuOpen = !_menuOpen;
-            if (!_menuOpen) _sliderOpen = false;
+            _padWanted = !_padWanted;
+            NSUserDefaults.StandardUserDefaults.SetBool(_padWanted, "padVisible");
             ApplyPad();
         };
         _view.AddSubview(_padToggle);
@@ -118,14 +118,14 @@ internal sealed class GameViewController : UIViewController
         _pad.SetOpacity(_padAlpha);
 
         _opacityBtn = UIButton.FromType(UIButtonType.System);
-        _opacityBtn.SetTitle("◐ 불투명도", UIControlState.Normal);
+        _opacityBtn.SetTitle("◐", UIControlState.Normal);
         _opacityBtn.SetTitleColor(UIColor.White, UIControlState.Normal);
-        _opacityBtn.TitleLabel.Font = UIFont.BoldSystemFontOfSize(14);
+        _opacityBtn.TitleLabel.Font = UIFont.BoldSystemFontOfSize(18);
         _opacityBtn.BackgroundColor = PadStyle.C(28, 36, 58, 0.85f);
         _opacityBtn.Layer.CornerRadius = 17;
         _opacityBtn.Layer.BorderWidth = 2;
         _opacityBtn.Layer.BorderColor = PadStyle.Border.CGColor;
-        _opacityBtn.TouchUpInside += (s, e) => { _sliderOpen = !_sliderOpen; ApplyPad(); };
+        _opacityBtn.TouchUpInside += (s, e) => _opacitySlider.Hidden = !_opacitySlider.Hidden;
         _view.AddSubview(_opacityBtn);
 
         _opacitySlider = new UISlider
@@ -149,36 +149,18 @@ internal sealed class GameViewController : UIViewController
         _editBtn = UIButton.FromType(UIButtonType.System);
         _editBtn.SetTitle("편집", UIControlState.Normal);
         _editBtn.SetTitleColor(UIColor.White, UIControlState.Normal);
-        _editBtn.TitleLabel.Font = UIFont.BoldSystemFontOfSize(14);
+        _editBtn.TitleLabel.Font = UIFont.BoldSystemFontOfSize(15);
         _editBtn.BackgroundColor = PadStyle.C(28, 36, 58, 0.85f);
         _editBtn.Layer.CornerRadius = 17;
         _editBtn.Layer.BorderWidth = 2;
         _editBtn.Layer.BorderColor = PadStyle.Border.CGColor;
         _editBtn.TouchUpInside += (s, e) =>
         {
-            _menuOpen = _sliderOpen = false;
+            _opacitySlider.Hidden = true;
             _pad.SetEditing(true);
             ApplyPad();
         };
         _view.AddSubview(_editBtn);
-
-        // 패드 숨김 / 보이기
-        _hideBtn = UIButton.FromType(UIButtonType.System);
-        _hideBtn.SetTitle("패드 숨김", UIControlState.Normal);
-        _hideBtn.SetTitleColor(UIColor.White, UIControlState.Normal);
-        _hideBtn.TitleLabel.Font = UIFont.BoldSystemFontOfSize(14);
-        _hideBtn.BackgroundColor = PadStyle.C(28, 36, 58, 0.85f);
-        _hideBtn.Layer.CornerRadius = 17;
-        _hideBtn.Layer.BorderWidth = 2;
-        _hideBtn.Layer.BorderColor = PadStyle.Border.CGColor;
-        _hideBtn.TouchUpInside += (s, e) =>
-        {
-            _padWanted = !_padWanted;
-            NSUserDefaults.StandardUserDefaults.SetBool(_padWanted, "padVisible");
-            _menuOpen = _sliderOpen = false;
-            ApplyPad();
-        };
-        _view.AddSubview(_hideBtn);
         _pad.EditEnded += ApplyPad;
         ApplyPadAlpha();
 
@@ -196,7 +178,6 @@ internal sealed class GameViewController : UIViewController
         _padToggle.Alpha = ui;
         _opacityBtn.Alpha = ui;
         _editBtn.Alpha = ui;
-        _hideBtn.Alpha = ui;
     }
 
     void ApplyPad()
@@ -205,15 +186,10 @@ internal sealed class GameViewController : UIViewController
         bool show = _padWanted && !physical;
         _pad.Show(show);
         bool editing = _pad.Editing;
-        if (physical || editing) _menuOpen = _sliderOpen = false;
-        if (!show) _sliderOpen = false;
         _padToggle.Hidden = physical || editing;
-        // 메뉴: 패드 버튼을 누르면 펼쳐진다 (패드가 숨겨진 상태에서는 '패드 보이기'만)
-        _opacityBtn.Hidden = !(_menuOpen && show);
-        _editBtn.Hidden = !(_menuOpen && show);
-        _hideBtn.Hidden = !_menuOpen;
-        _hideBtn.SetTitle(show ? "패드 숨김" : "패드 보이기", UIControlState.Normal);
-        _opacitySlider.Hidden = !(_menuOpen && _sliderOpen);
+        _opacityBtn.Hidden = !show || editing;
+        _editBtn.Hidden = !show || editing;
+        if (!show || editing) _opacitySlider.Hidden = true;
         PadInput.SetOverlayActive(show);
     }
 
@@ -222,15 +198,11 @@ internal sealed class GameViewController : UIViewController
         if (_pad == null) return;
         _pad.Frame = _view.Bounds;
         var ins = _view.SafeAreaInsets;
-        nfloat W = _view.Bounds.Width, ty = ins.Top + 6;
-        _padToggle.Frame = new CGRect((W - 84) / 2, ty, 84, 34);
-        // 메뉴 줄: [◐ 불투명도] [편집] [패드 숨김]
-        nfloat my = ty + 34 + 8, g = 8, w1 = 100, w2 = 56, w3 = 96;
-        nfloat mx = (W - (w1 + w2 + w3 + 2 * g)) / 2;
-        _opacityBtn.Frame = new CGRect(mx, my, w1, 34);
-        _editBtn.Frame = new CGRect(mx + w1 + g, my, w2, 34);
-        _hideBtn.Frame = new CGRect(mx + w1 + g + w2 + g, my, w3, 34);
-        _opacitySlider.Frame = new CGRect((W - 220) / 2, my + 34 + 8, 220, 32);
+        nfloat tx = (_view.Bounds.Width - 186) / 2, ty = ins.Top + 6;
+        _padToggle.Frame = new CGRect(tx, ty, 84, 34);
+        _opacityBtn.Frame = new CGRect(tx + 92, ty, 34, 34);
+        _editBtn.Frame = new CGRect(tx + 134, ty, 52, 34);
+        _opacitySlider.Frame = new CGRect((_view.Bounds.Width - 220) / 2, ty + 34 + 8, 220, 32);
     }
 
     public void HideStatus() => InvokeOnMainThread(() => _status.Hidden = true);

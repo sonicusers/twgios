@@ -49,8 +49,6 @@ internal static class GameRunner
             Host.Use(host);
             Launch(layout);
             Host.Log("game exited");
-            // 게임 메뉴에서 EXIT 를 누르면 Main 이 반환된다 -> 멈춘 화면만 남지 않도록 앱도 종료한다
-            QuitApp();
         }
         catch (Exception ex)
         {
@@ -59,14 +57,6 @@ internal static class GameRunner
             ui.ShowStatus("\n오류가 났습니다. 이 화면을 캡처해 보내 주세요.\n\n" +
                 string.Join("\n", ex.ToString().Split('\n').Take(12)), error: true);
         }
-    }
-
-    static void QuitApp()
-    {
-        Host.Log("quitting app");
-        // 로그/저장 파일이 디스크에 반영될 짧은 시간을 준 뒤, 메인 스레드에서 프로세스를 끝낸다
-        System.Threading.Thread.Sleep(200);
-        UIApplication.SharedApplication.InvokeOnMainThread(() => Environment.Exit(0));
     }
 
     // 진단용: 게임/shim 로그를 파일 앱 > WogiOS > wog.log 로도 남긴다 (실행할 때마다 새로 씀)

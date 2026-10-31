@@ -27,28 +27,20 @@ internal sealed class PadButton : UIView
 {
     readonly int _bit;
     readonly UILabel _label;
-    readonly UILabel _sub;      // 글자 아래 작은 기능 설명 (없으면 null)
-    readonly bool _rounded;     // true 면 둥근 사각형, false 면 원/알약
     readonly float _fontSize;
-    public readonly float BorderW;
-    readonly UIColor _fill;
-    static readonly UIColor PressTint = UIColor.FromRGBA(90 / 255f, 80 / 255f, 170 / 255f, 0.75f);
     int _touches;
     bool _down;
     float _base = 0.8f;
 
-    public PadButton(string text, int bit, UIColor fill, float fontSize = 20, string sub = null, bool rounded = false, float borderW = 3)
+    public PadButton(string text, int bit, UIColor fill, float fontSize = 20)
     {
-        BorderW = borderW;
-        _fill = fill;
         _bit = bit;
         _fontSize = fontSize;
-        _rounded = rounded;
         MultipleTouchEnabled = true;
         UserInteractionEnabled = true;
         BackgroundColor = fill;
         Alpha = _base;
-        Layer.BorderWidth = borderW;
+        Layer.BorderWidth = 3;
         Layer.BorderColor = PadStyle.Border.CGColor;
         _label = new UILabel
         {
@@ -59,35 +51,13 @@ internal sealed class PadButton : UIView
             UserInteractionEnabled = false,
         };
         AddSubview(_label);
-        if (!string.IsNullOrEmpty(sub))
-        {
-            _sub = new UILabel
-            {
-                Text = sub,
-                TextColor = UIColor.FromWhiteAlpha(0.85f, 1f),
-                TextAlignment = UITextAlignment.Center,
-                Font = UIFont.BoldSystemFontOfSize(SubSize(1f)),
-                UserInteractionEnabled = false,
-            };
-            AddSubview(_sub);
-        }
     }
-
-    float SubSize(float scale) => Math.Max(8f, _fontSize * 0.5f) * scale;
 
     public override void LayoutSubviews()
     {
         base.LayoutSubviews();
-        if (_sub != null)
-        {
-            // 큰 글자 + 작은 설명을 세로 가운데로 쌓는다
-            nfloat mh = _label.Font.LineHeight, sh = _sub.Font.LineHeight;
-            nfloat y0 = (Bounds.Height - (mh + sh)) / 2;
-            _label.Frame = new CGRect(0, y0, Bounds.Width, mh);
-            _sub.Frame = new CGRect(0, y0 + mh - 2, Bounds.Width, sh);
-        }
-        else _label.Frame = Bounds;
-        Layer.CornerRadius = _rounded ? (nfloat)Math.Min(14, Bounds.Height / 3) : Bounds.Height / 2;
+        _label.Frame = Bounds;
+        Layer.CornerRadius = Bounds.Height / 2;
     }
 
     void Down()
@@ -95,7 +65,6 @@ internal sealed class PadButton : UIView
         if (_down) return;
         _down = true;
         Alpha = Math.Min(1f, _base + 0.3f);
-        if (_fill.CGColor.Alpha < 0.01f) BackgroundColor = PressTint;   // 투명 버튼은 누를 때만 살짝 색이 찬다
         PadInput.SetBits(0, _bit);
         PadStyle.Tap();
     }
@@ -105,7 +74,6 @@ internal sealed class PadButton : UIView
         if (!_down) return;
         _down = false;
         Alpha = _base;
-        BackgroundColor = _fill;
         PadInput.SetBits(_bit, 0);
     }
 
@@ -116,12 +84,7 @@ internal sealed class PadButton : UIView
         Alpha = _down ? Math.Min(1f, a + 0.3f) : a;
     }
 
-    public void ApplyScale(float scale)
-    {
-        _label.Font = UIFont.BoldSystemFontOfSize(_fontSize * scale);
-        if (_sub != null) _sub.Font = UIFont.BoldSystemFontOfSize(SubSize(scale));
-        SetNeedsLayout();
-    }
+    public void ApplyScale(float scale) => _label.Font = UIFont.BoldSystemFontOfSize(_fontSize * scale);
 
     public void Reset() { _touches = 0; Up(); }
 
@@ -242,20 +205,18 @@ internal sealed class PadOverlay : UIView
         BackgroundColor = UIColor.Clear;
         MultipleTouchEnabled = true;
         var navy = PadStyle.C(28, 36, 58);
-        var gray = UIColor.Clear;   // XYAB 는 속이 빈 투명 버튼 (테두리 + 글자만)
         _dpad = new DPadView();
         _els["dpad"] = _dpad;
-        // 세 번째 인자 뒤: (글자 크기, 아래 설명, 둥근사각형 여부). 설명을 빼면 예전 모양 그대로.
-        _els["lt"] = new PadButton("LT", PadInput.LTrigger, navy, 11, "어빌", true, 2);
-        _els["lb"] = new PadButton("LB", PadInput.LB, navy, 11, "이전", true, 2);
-        _els["rt"] = new PadButton("RT", PadInput.RTrigger, navy, 11, "공격", true, 2);
-        _els["rb"] = new PadButton("RB", PadInput.RB, navy, 11, "다음", true, 2);
-        _els["y"] = new PadButton("Y", PadInput.BtnY, gray, 24, "휴식", false, 2);
-        _els["x"] = new PadButton("X", PadInput.BtnX, gray, 24, "링", false, 2);
-        _els["b"] = new PadButton("B", PadInput.BtnB, gray, 24, "취소", false, 2);
-        _els["a"] = new PadButton("A", PadInput.BtnA, gray, 24, "확인", false, 2);
-        _els["back"] = new PadButton("◁ 상태", PadInput.Back, navy, 9, null, true, 2);
-        _els["start"] = new PadButton("≡ 시스템", PadInput.Start, navy, 9, null, true, 2);
+        _els["lt"] = new PadButton("LT", PadInput.LTrigger, navy);
+        _els["lb"] = new PadButton("LB", PadInput.LB, navy);
+        _els["rt"] = new PadButton("RT", PadInput.RTrigger, navy);
+        _els["rb"] = new PadButton("RB", PadInput.RB, navy);
+        _els["y"] = new PadButton("Y", PadInput.BtnY, PadStyle.C(107, 85, 16), 26);
+        _els["x"] = new PadButton("X", PadInput.BtnX, PadStyle.C(27, 47, 107), 26);
+        _els["b"] = new PadButton("B", PadInput.BtnB, PadStyle.C(122, 28, 28), 26);
+        _els["a"] = new PadButton("A", PadInput.BtnA, PadStyle.C(28, 90, 44), 26);
+        _els["back"] = new PadButton("◁", PadInput.Back, navy, 22);
+        _els["start"] = new PadButton("≡", PadInput.Start, navy, 22);
         foreach (var id in Ids) AddSubview(_els[id]);
 
         // 편집 모드 전용 UI
@@ -373,7 +334,7 @@ internal sealed class PadOverlay : UIView
         else
         {
             v.Layer.BorderColor = PadStyle.Border.CGColor;
-            v.Layer.BorderWidth = v is PadButton pb ? pb.BorderW : 0;
+            v.Layer.BorderWidth = v is PadButton ? 3 : 0;
         }
     }
 
@@ -502,28 +463,25 @@ internal sealed class PadOverlay : UIView
         nfloat w = Bounds.Width, h = Bounds.Height, m = 20;
         nfloat l = ins.Left + m, r = w - ins.Right - m, t = ins.Top + m, bt = h - ins.Bottom - m;
 
-        nfloat bw = 48, bh = 30, gap = 8;
+        nfloat bw = 88, bh = 46, gap = 10;
         d["lt"] = new CGRect(l, t, bw, bh);
         d["lb"] = new CGRect(l, t + bh + gap, bw, bh);
         d["rt"] = new CGRect(r - bw, t, bw, bh);
         d["rb"] = new CGRect(r - bw, t + bh + gap, bw, bh);
 
-        // 상태/시스템 버튼은 십자키·A 버튼 바로 아래에 둔다. 그만큼 위쪽을 비워 둔다.
-        nfloat sw = 54, sh = 22, sgap = 8;
-        nfloat low = sh + sgap;
-
         nfloat ds = 150;
-        d["dpad"] = new CGRect(l + 10, bt - low - ds, ds, ds);
+        d["dpad"] = new CGRect(l + 10, bt - ds, ds, ds);
 
         nfloat db = 58, rad = 46;
-        nfloat cx = r - db / 2 - rad - 4, cy = bt - low - db / 2 - rad - 4;
+        nfloat cx = r - db / 2 - rad - 4, cy = bt - db / 2 - rad - 4;
         d["y"] = new CGRect(cx - db / 2, cy - rad - db / 2, db, db);
         d["a"] = new CGRect(cx - db / 2, cy + rad - db / 2, db, db);
         d["x"] = new CGRect(cx - rad - db / 2, cy - db / 2, db, db);
         d["b"] = new CGRect(cx + rad - db / 2, cy - db / 2, db, db);
 
-        d["back"] = new CGRect(l + 10 + ds / 2 - sw / 2, bt - sh, sw, sh);   // 십자키 아래
-        d["start"] = new CGRect(cx - sw / 2, bt - sh, sw, sh);              // A 버튼 아래
+        nfloat sw = 60, sh = 42;
+        d["back"] = new CGRect(w / 2 - 110 - sw / 2, bt - sh, sw, sh);
+        d["start"] = new CGRect(w / 2 + 110 - sw / 2, bt - sh, sw, sh);
         return d;
     }
 
