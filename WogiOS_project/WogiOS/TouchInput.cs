@@ -13,7 +13,7 @@ namespace WogiOS;
 // Android TouchInput 을 UIKit 이벤트로 옮긴 것 (탭=클릭, 드래그, 길게=우클릭, 두 손가락=휠/우클릭)
 internal sealed class TouchInput
 {
-    enum Mode { None, Pending, Drag, Pan, Hold, TwoFinger }
+    enum Mode { None, Pending, Drag, Pan, Hold, TwoFinger, Scroll }
 
     const uint MOVE = 512, LDOWN = 513, LUP = 514, RDOWN = 516, RUP = 517, WHEEL = 522;
 
@@ -86,9 +86,12 @@ internal sealed class TouchInput
         else if (_mode == Mode.Pending && Math.Max(Math.Abs(x - _downX), Math.Abs(y - _downY)) > _slop)
         {
             CancelLongPress();
-            if (GameHooks.CanPan) { _mode = Mode.Pan; PanTo(x, y, true); }
+            // 0.20: 캐릭터·군단 에디터, 아이템·스킬 보기 등 목록 화면에서는 한 손가락 드래그로 목록을 굴린다
+            if (GameState.Current.ScrollByDrag) { _mode = Mode.Scroll; _lastY = _downY; ScrollTo(x, y); }
+            else if (GameHooks.CanPan) { _mode = Mode.Pan; PanTo(x, y, true); }
             else { _mode = Mode.Drag; Post(LDOWN, _downX, _downY); Post(MOVE, x, y); }
         }
+        else if (_mode == Mode.Scroll) ScrollTo(x, y);
         else if (_mode == Mode.Pan) PanTo(x, y, false);
         else if (_mode == Mode.Pending || _mode == Mode.Drag || _mode == Mode.Hold) Post(MOVE, x, y);
     }
@@ -121,6 +124,18 @@ internal sealed class TouchInput
         if (_mode == Mode.Drag) Post(LUP, _downX, _downY);
         if (_mode == Mode.Hold) Post(RUP, _downX, _downY);
         _mode = Mode.None;
+    }
+
+    // 한 손가락 드래그를 마우스 휠로 바꿔 보낸다 (두 손가락 스크롤과 같은 36pt 단위)
+    void ScrollTo(float x, float y)
+    {
+        while (Math.Abs(y - _lastY) >= _wheelStep)
+        {
+            int s = y > _lastY ? 1 : -1;
+            _lastY += s * _wheelStep;
+            var (cx, cy) = Display.ToClient(x, y);
+            WinMessages.PostMouse(WHEEL, cx, cy, (nint)((s * 120) << 16));
+        }
     }
 
     void PanTo(float x, float y, bool first)
