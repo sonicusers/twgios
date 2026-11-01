@@ -107,6 +107,7 @@ internal sealed unsafe class IosHost : IHost
     {
         _active.Wait();
         WogPatcher.GameHooks.Refresh();
+        WogPatcher.GameState.Refresh();   // 0.20: 단축키 모드가 어빌 이름·키 설정·검색창 상태를 읽는다
     }
 
     public void ShowMessage(string caption, string text) => Ask(caption, text, new[] { "확인" });
