@@ -245,7 +245,7 @@ internal sealed class PadOverlay : UIView
         _els["rb"] = new PadButton("RB", PadInput.RB, navy, caption: "다음");
         _els["y"] = new PadButton("Y", PadInput.BtnY, navy, 26, "휴식", 8.5f);
         _els["x"] = new PadButton("X", PadInput.BtnX, navy, 26, "링", 8.5f);
-        _els["b"] = new PadButton("B", PadInput.BtnB, navy, 26, "취소/어빌", 8.5f);
+        _els["b"] = new PadButton("B", PadInput.BtnB, navy, 26, "취소", 8.5f);
         _els["a"] = new PadButton("A", PadInput.BtnA, navy, 26, "확인", 8.5f);
         _els["back"] = new PadButton("◁", PadInput.Back, navy, 22, "상태", 8.5f);
         _els["start"] = new PadButton("≡", PadInput.Start, navy, 22, "시스템 메뉴", 8.5f);
