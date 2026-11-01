@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
+using CoreAnimation;
 using CoreGraphics;
 using Foundation;
 using UIKit;
@@ -33,6 +34,38 @@ internal sealed class ShortcutKey : UIView
     public bool Dim { get; private set; }
     public bool Round { get; set; }
     public Action<bool> Pressed { get; set; }
+
+    // 글자 대신 직접 그린 불투명도 아이콘(◐). 글자 아이콘은 폰트 때문에 아래로 치우쳐서 정중앙에 그린다
+    readonly CAShapeLayer _iconRing = new CAShapeLayer();
+    readonly CAShapeLayer _iconHalf = new CAShapeLayer();
+    bool _opacityIcon;
+    public bool OpacityIcon
+    {
+        get => _opacityIcon;
+        set
+        {
+            if (_opacityIcon == value) return;
+            _opacityIcon = value;
+            if (value)
+            {
+                _iconRing.FillColor = null;
+                _iconRing.LineWidth = 1.4f;
+                Layer.AddSublayer(_iconRing);
+                Layer.AddSublayer(_iconHalf);
+            }
+            else { _iconRing.RemoveFromSuperLayer(); _iconHalf.RemoveFromSuperLayer(); }
+            _label.Hidden = value;
+            SetNeedsLayout();
+        }
+    }
+
+    // 터치 UI 불투명도 (상단 버튼줄은 건드리지 않고 단축키 버튼에만 적용)
+    float _baseAlpha = 1f;
+    public float BaseAlpha
+    {
+        get => _baseAlpha;
+        set { if (Math.Abs(_baseAlpha - value) < 0.001f) return; _baseAlpha = value; Refresh(); }
+    }
 
     public ShortcutKey(string label, string hint = "", KeyKind kind = KeyKind.Plain)
     {
@@ -81,7 +114,7 @@ internal sealed class ShortcutKey : UIView
         _hint.Text = Hint;
         _label.TextColor = PadStyle.C(241, 238, 250, 235 / 255f);
         _hint.TextColor = PadStyle.C(169, 163, 187, 200 / 255f);
-        Alpha = Dim ? 0.43f : 1f;
+        Alpha = (Dim ? 0.43f : 1f) * _baseAlpha;
     }
 
     public override void LayoutSubviews()
@@ -94,6 +127,20 @@ internal sealed class ShortcutKey : UIView
         _label.Font = Kind == KeyKind.Faint ? UIFont.SystemFontOfSize(labelSize) : UIFont.BoldSystemFontOfSize(labelSize);
         _hint.Font = UIFont.SystemFontOfSize(Math.Min(10.5f, h * 0.26f));
         _hint.Hidden = !showHint;
+        if (_opacityIcon)
+        {
+            float r = Math.Min(8f, Math.Min(w, h) * 0.3f);
+            var c = new CGPoint(w / 2f, h / 2f);
+            var color = PadStyle.C(241, 238, 250, 235 / 255f).CGColor;
+            _iconRing.Frame = Bounds; _iconHalf.Frame = Bounds;
+            _iconRing.Path = UIBezierPath.FromOval(new CGRect(c.X - r, c.Y - r, r * 2, r * 2)).CGPath;
+            _iconRing.StrokeColor = color;
+            var half = UIBezierPath.FromArc(c, r, (nfloat)(Math.PI / 2), (nfloat)(Math.PI * 1.5), true);   // 왼쪽 반원
+            half.ClosePath();
+            _iconHalf.Path = half.CGPath;
+            _iconHalf.FillColor = color;
+            _iconHalf.StrokeColor = null;
+        }
         if (showHint)
         {
             _label.Frame = new CGRect(3, 0, w - 6, h * 0.62f);
@@ -214,14 +261,18 @@ internal sealed class ShortcutOverlay : UIView
     readonly List<(UIView View, Func<Lay, CGRect?> Place)> _placed = new();
     readonly ShortcutKey[] _right = new ShortcutKey[10];
     readonly ShortcutKey[] _modeTabs = new ShortcutKey[3];
-    ShortcutKey _menuKey;
+    ShortcutKey _menuKey;     // ETC (기존 게임 메뉴)
+    ShortcutKey _opacityTab;  // 불투명도 탭 (◐ 아이콘)
+    ShortcutKey _toggleKey;   // 새 "메뉴" 버튼: 누르면 [ETC 단축키 패드 숨김] 이 펼쳐진다
     ShortcutTextBar _textBar;
     GameState.Snapshot _game = GameState.Current;
     bool _physical;
+    bool _expanded;   // 메뉴를 눌러 [ETC 단축키 패드 숨김] 이 펼쳐져 있는가
 
     public ControlMode Mode { get; private set; }
     public event Action ModeChanged;
     public event Action PadTabTapped;
+    public event Action OpacityTabTapped;
 
     public ShortcutOverlay(UIViewController owner, float scale)
     {
@@ -280,9 +331,18 @@ internal sealed class ShortcutOverlay : UIView
 
     void BuildTopBar()
     {
-        _menuKey = new ShortcutKey("메뉴") { Round = true };
+        _toggleKey = new ShortcutKey("메뉴") { Round = true };
+        Add(_toggleKey, f => TopSlot(f, -2));
+        _toggleKey.Pressed = down => { if (!down) SetExpanded(!_expanded); };
+
+        _menuKey = new ShortcutKey("ETC") { Round = true };
         Add(_menuKey, f => TopSlot(f, -1));
-        _menuKey.Pressed = down => { if (!down) GameMenuSheet.Open(_owner, _menuKey); };
+        _menuKey.Pressed = down =>
+        {
+            if (down) return;
+            SetExpanded(false);
+            GameMenuSheet.Open(_owner, _menuKey);   // 기존 게임 메뉴(시스템 메뉴 등)
+        };
 
         string[] names = { "단축키", "패드", "숨김" };
         for (int i = 0; i < 3; i++)
@@ -293,13 +353,43 @@ internal sealed class ShortcutOverlay : UIView
             key.Pressed = down =>
             {
                 if (down) return;
+                SetExpanded(false);   // 고르면 다시 메뉴 하나로 접힌다
                 if (index == (int)ControlMode.Pad && Mode == ControlMode.Pad) PadTabTapped?.Invoke();
                 else SetMode((ControlMode)index);
             };
         }
 
+        _opacityTab = new ShortcutKey("◐", "", KeyKind.Faint) { Round = true, OpacityIcon = true };   // 불투명도 아이콘(직접 그림)
+        Add(_opacityTab, f => TopSlot(f, 3));
+        _opacityTab.Pressed = down =>
+        {
+            if (down) return;
+            SetExpanded(false);
+            OpacityTabTapped?.Invoke();
+        };
+
         _textBar = new ShortcutTextBar();
         Add(_textBar, f => _game.TextEntry == null ? null : TextBarRect(f));
+    }
+
+    // 터치 UI(단축키 버튼) 불투명도. 상단 [메뉴/ETC/탭] 줄은 항상 또렷하게 둔다
+    public void SetUiOpacity(float a)
+    {
+        foreach (var (v, _) in _placed)
+        {
+            if (v is not ShortcutKey k) continue;
+            bool top = ReferenceEquals(k, _toggleKey) || ReferenceEquals(k, _menuKey) || ReferenceEquals(k, _opacityTab)
+                       || Array.IndexOf((Array)_modeTabs, (object)k) >= 0;
+            if (!top) k.BaseAlpha = a;
+        }
+    }
+
+    void SetExpanded(bool on)
+    {
+        if (_expanded == on) return;
+        _expanded = on;
+        _toggleKey.Set(_toggleKey.Label, "", on ? KeyKind.Accent : KeyKind.Plain);
+        SetNeedsLayout();
     }
 
     void SetMode(ControlMode mode)
@@ -434,15 +524,25 @@ internal sealed class ShortcutOverlay : UIView
     float ActionsLeft(Lay f) => f.L + 34f * 3f + 14f;
     static float RowTop(Lay f) => 44f + f.InsTop;
 
+    // index: -2 = 메뉴(동그라미 토글), -1 = ETC, 0..2 = 단축키/패드/숨김, 3 = 불투명도(◐)
+    // 펼친 순서: 메뉴 · ETC · 단축키 · 패드 · ◐ · 숨김
     CGRect TopSlot(Lay f, int index)
     {
-        float bar = TopBarH, menuW = 58f, tabW = 58f, gap = 6f;
-        float total = menuW + gap * 2f + tabW * 3f;
+        float bar = TopBarH, gap = 6f, d = 28.8f;   // d = 메뉴 동그라미 지름 (36 의 80%)
+        bool open = _expanded && !_physical;
         float y = f.Game.Top >= bar + 6f ? ((float)f.Game.Top - bar) / 2f : 4f + f.InsTop;
-        float x0 = (f.W - total) / 2f;
-        if (index < 0) return new CGRect(x0, y, menuW, bar);
-        float x = x0 + menuW + gap * 2f + tabW * index;
-        return new CGRect(x, y, tabW, bar);
+        float w = Math.Min(60f, (f.W - 16f - d - gap * 5f) / 5f);
+        if (index == -2)
+        {
+            float total = open ? d + gap + w * 5f + gap * 4f : d;
+            float x0 = (f.W - total) / 2f;
+            return new CGRect(x0, Math.Max(0f, y - (d - bar) / 2f), d, d);
+        }
+        if (!open) return new CGRect((f.W - w) / 2f, y, w, bar);   // 컨트롤러 연결 시 ETC 만
+        float t = d + gap + w * 5f + gap * 4f;
+        float x = (f.W - t) / 2f + d + gap;
+        int slot = index == -1 ? 0 : index == 0 ? 1 : index == 1 ? 2 : index == 3 ? 3 : 4;
+        return new CGRect(x + (w + gap) * slot, y, w, bar);
     }
 
     CGRect TextBarRect(Lay f)
@@ -563,12 +663,16 @@ internal sealed class ShortcutOverlay : UIView
 
         foreach (var (view, place) in _placed)
         {
-            bool isTab = Array.IndexOf((Array)_modeTabs, (object)view) >= 0;
+            bool isTab = Array.IndexOf((Array)_modeTabs, (object)view) >= 0 || ReferenceEquals(view, _opacityTab);
             bool isMenu = ReferenceEquals(view, _menuKey);
             bool isText = ReferenceEquals(view, _textBar);
             CGRect? rect;
-            if (_physical) rect = isMenu ? place(frame) : null;
-            else if (Mode == ControlMode.Hidden && !isTab && !isMenu && !isText) rect = null;
+            bool isToggle = ReferenceEquals(view, _toggleKey);
+            if (isToggle) rect = _physical ? null : place(frame);                 // 컨트롤러 연결 시엔 ETC 만 남긴다
+            else if (isMenu) rect = (_expanded || _physical) ? place(frame) : null;
+            else if (isTab) rect = (_expanded && !_physical) ? place(frame) : null;
+            else if (_physical) rect = null;
+            else if (Mode == ControlMode.Hidden && !isText) rect = null;
             else rect = place(frame);
             if (rect == null) { view.Hidden = true; continue; }
             view.Hidden = false;

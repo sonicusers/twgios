@@ -43,7 +43,7 @@ internal sealed class GameViewController : UIViewController
     UILabel _status;
     PadOverlay _pad;
     ShortcutOverlay _keys;
-    UIButton _opacityBtn, _editBtn;
+    UIButton _editBtn;
     UISlider _opacitySlider;
     bool _menuOpen, _sliderOpen;
     float _padAlpha;
@@ -107,16 +107,18 @@ internal sealed class GameViewController : UIViewController
             if (!_menuOpen) _sliderOpen = false;
             ApplyPad();
         };
+        // 상단 '불투명도' 탭: 터치 UI(패드·단축키 버튼) 불투명도 슬라이더를 열고 닫는다
+        _keys.OpacityTabTapped += () =>
+        {
+            _sliderOpen = !_sliderOpen;
+            ApplyPad();
+        };
         _view.AddSubview(_keys);
 
         // 패드 투명도 조절 (◐ 버튼을 누르면 슬라이더가 나타남)
         _padAlpha = NSUserDefaults.StandardUserDefaults.FloatForKey("padOpacity");
         if (_padAlpha < 0.15f || _padAlpha > 1f) _padAlpha = 0.6f;
         _pad.SetOpacity(_padAlpha);
-
-        _opacityBtn = MenuButton("◐ 불투명도");
-        _opacityBtn.TouchUpInside += (s, e) => { _sliderOpen = !_sliderOpen; ApplyPad(); };
-        _view.AddSubview(_opacityBtn);
 
         _opacitySlider = new UISlider
         {
@@ -167,13 +169,12 @@ internal sealed class GameViewController : UIViewController
         return b;
     }
 
-    // 패드와 ◐/편집 버튼이 같은 투명도를 따른다. 버튼은 너무 연해서 못 찾는 일이 없게 최소 35%는 유지한다.
+    // 패드·단축키 버튼·편집 버튼이 같은 투명도를 따른다. 편집 버튼은 너무 연해서 못 찾는 일이 없게 최소 35%는 유지한다.
     void ApplyPadAlpha()
     {
         _pad.SetOpacity(_padAlpha);
-        float ui = Math.Max(0.35f, _padAlpha);
-        _opacityBtn.Alpha = ui;
-        _editBtn.Alpha = ui;
+        _keys.SetUiOpacity(_padAlpha);
+        _editBtn.Alpha = Math.Max(0.35f, _padAlpha);
     }
 
     void ApplyPad()
@@ -183,14 +184,13 @@ internal sealed class GameViewController : UIViewController
         bool show = padMode && !physical;
         _pad.Show(show);
         bool editing = _pad.Editing;
-        if (physical || editing || !padMode) _menuOpen = _sliderOpen = false;
-        if (!show) _sliderOpen = false;
+        if (physical || editing || !padMode) _menuOpen = false;
+        if (physical || editing || _keys.Mode == ControlMode.Hidden) _sliderOpen = false;
         _keys.SetPhysical(physical);
         _keys.Hidden = editing;                       // 패드 위치를 편집하는 동안에는 위쪽 줄도 숨김
         if (_keys.Mode != ControlMode.Keys || physical) _keys.ReleaseAll();
-        _opacityBtn.Hidden = !(_menuOpen && show);
         _editBtn.Hidden = !(_menuOpen && show);
-        _opacitySlider.Hidden = !(_menuOpen && _sliderOpen);
+        _opacitySlider.Hidden = !_sliderOpen;
         PadInput.SetOverlayActive(show);
     }
 
@@ -201,12 +201,9 @@ internal sealed class GameViewController : UIViewController
         _keys.Frame = _view.Bounds;
         var ins = _view.SafeAreaInsets;
         nfloat W = _view.Bounds.Width, my = ins.Top + 44, g = 8, w1 = 100, w2 = 56;
-        nfloat mx = (W - (w1 + w2 + g)) / 2;
-        _opacityBtn.Frame = new CGRect(mx, my, w1, 34);
-        _editBtn.Frame = new CGRect(mx + w1 + g, my, w2, 34);
+        _editBtn.Frame = new CGRect((W - w2) / 2, my, w2, 34);
         _opacitySlider.Frame = new CGRect((W - 220) / 2, my + 34 + 8, 220, 32);
         // 메뉴/슬라이더가 단축키·패드 위에 오도록
-        _view.BringSubviewToFront(_opacityBtn);
         _view.BringSubviewToFront(_editBtn);
         _view.BringSubviewToFront(_opacitySlider);
     }
