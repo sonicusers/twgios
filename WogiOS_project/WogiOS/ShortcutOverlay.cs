@@ -12,7 +12,7 @@ using MenuEntry = WogShim.Win32.User32.MenuEntry;   // User32 안에 들어 있�
 namespace WogiOS;
 
 // 안드로이드 0.20 의 "단축키 모드"(ControlsOverlay / Key / TextBar / GameMenu)를 UIKit 으로 옮긴 것.
-// 화면 위에 키보드 단축키 버튼을 놓고, 누르면 게임에 키 입력(Messages.PostKey)을 보낸다.
+// 화면 위에 키보드 단축키 버튼을 놓고, 누르면 게임에 키 입력(WogShim.Win32.Messages.PostKey)을 보낸다.
 // 기존 PadOverlay(LT/LB/XYAB 화면 패드)는 그대로 두고, 위쪽 [단축키|패드|숨김] 탭으로 모드를 고른다.
 
 internal enum ControlMode { Keys, Pad, Hidden }
@@ -166,8 +166,8 @@ internal sealed class ShortcutTextBar : UITextField
             string text = Text ?? "";
             int i = 0;
             while (i < text.Length && i < _sent.Length && text[i] == _sent[i]) i++;
-            for (int j = i; j < _sent.Length; j++) Messages.PostChar('\b');
-            for (int k = i; k < text.Length; k++) Messages.PostChar(text[k]);
+            for (int j = i; j < _sent.Length; j++) WogShim.Win32.Messages.PostChar('\b');
+            for (int k = i; k < text.Length; k++) WogShim.Win32.Messages.PostChar(text[k]);
             _sent = text;
         };
     }
@@ -319,7 +319,7 @@ internal sealed class ShortcutOverlay : UIView
     }
 
     static int Vk(string action, int fallback) => GameState.Current.Key(action, fallback);
-    static void Tap(int vk, bool down) => Messages.PostKey(vk, down);
+    static void Tap(int vk, bool down) => WogShim.Win32.Messages.PostKey(vk, down);
     static Action<bool> Sends(Func<int> vk) => down => Tap(vk(), down);
 
     void BuildShortcutKeys()
