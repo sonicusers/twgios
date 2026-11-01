@@ -560,7 +560,7 @@ internal sealed class ShortcutOverlay : UIView
     {
         float inset = left ? f.InsLeft : f.InsRight;
         float avail = Math.Max(40f, f.Side - inset);
-        float w = Math.Min(avail - 16f, 124f);
+        float w = f.Tablet ? Math.Min(avail - 8f, 160f) : Math.Min(avail - 16f, 124f);   // 태블릿: 게임 화면 바로 앞(4pt)까지
         float x = left ? inset + (avail - w) / 2f : f.W - f.Side + (avail - w) / 2f;
         return (x, w);
     }
@@ -748,7 +748,8 @@ internal sealed class ShortcutOverlay : UIView
             if (h - 2f * top >= h * 0.68f) { tablet = true; topPt = top; }   // 게임이 너무 작아지면 예전 배치 유지
         }
         Display.TopLimit = topNeeded ? (int)(topPt * _scale) : -1;
-        float side = tablet ? (rw > 1 ? Math.Clamp((float)game.Left, 60f, 160f) : TabletSide)
+        // 태블릿의 양옆 여백은 Display.Rect 가 아니라 계산으로 구한다(Rect 는 TopLimit 이 반영되기 전 값이 남아 있을 수 있다)
+        float side = tablet ? Math.Max(60f, (w - (h - 2f * topPt) * 4f / 3f) / 2f)
                             : Math.Max((float)game.Left, 140f);
         var frame = new Lay(w, h, game, wide, tablet, side, ins);
 
