@@ -241,10 +241,11 @@ internal sealed class ShortcutOverlay : UIView
         public readonly float W, H, Side;
         public readonly CGRect Game;
         public readonly bool Wide;
+        public readonly bool Tablet;   // 4:3 에 가까운 태블릿: 단축키를 양옆 검은 여백에 한 줄로 세운다
         public readonly float InsTop, InsLeft, InsRight, InsBottom;
-        public Lay(float w, float h, CGRect game, bool wide, float side, UIEdgeInsets ins)
+        public Lay(float w, float h, CGRect game, bool wide, bool tablet, float side, UIEdgeInsets ins)
         {
-            W = w; H = h; Game = game; Wide = wide; Side = side;
+            W = w; H = h; Game = game; Wide = wide; Tablet = tablet; Side = side;
             InsTop = (float)ins.Top; InsLeft = (float)ins.Left; InsRight = (float)ins.Right; InsBottom = (float)ins.Bottom;
         }
         public float L => Math.Max(10f, InsLeft + 4f);          // 왼쪽 여백
@@ -255,6 +256,7 @@ internal sealed class ShortcutOverlay : UIView
     static readonly int[] AbilityKeys = { 49, 50, 51, 52, 81, 87, 69, 82 };
     static readonly string[] AbilityKeyNames = { "1", "2", "3", "4", "Q", "W", "E", "R" };
     const float TopBarH = 28f;
+    const float TabletSide = 108f;   // 태블릿 모드에서 양옆에 비워 둘 검은 여백 폭(pt)
 
     readonly UIViewController _owner;
     readonly float _scale;
@@ -563,9 +565,50 @@ internal sealed class ShortcutOverlay : UIView
         return (x, w);
     }
 
+    const float TabletGap = 5f;
+    const float TabletArrowH = 47f, TabletArrowGap = 5f;   // 방향키 버튼 높이·간격
+    // 태블릿 왼쪽 여백에 놓는 오른쪽열 칸 번호 (어빌 메뉴가 열리면 1~5번 칸)
+    int[] TabletLeftSlots() => _game.AbilityMenuOpen ? new[] { 0, 1, 2, 3, 4 } : new[] { 0, 1, 2, 3, 5, 7 };
+    // 태블릿 오른쪽 여백의 칸 수: 링·상태·다음 + 남은 칸 + 확인·취소. 맨 아래(취소)를 기준으로 위로 쌓는다
+    // (시스템·더보기 = 8, 9번 칸은 오른쪽 맨 위에 따로 둔다)
+    int TabletRightCount()
+    {
+        int n = 3 + 2;
+        var left = TabletLeftSlots();
+        for (int k = 0; k < 8; k++) if (Array.IndexOf(left, k) < 0) n++;
+        return n;
+    }
+    CGRect TabletRightRow(Lay f, int i)
+    {
+        float rh = TabletRowH(f);
+        float bottomY = f.H - Math.Max(14f, f.InsBottom + 8f) - rh;   // 취소 자리
+        var (x0, w) = SideBox(f, false);
+        int count = TabletRightCount();
+        // 링~휴식 칸들은 네 칸 띄운다. 맨 위 시스템·더보기(또는 ▲▼)와 겹치면 그 아래까지만 올린다
+        float firstY = bottomY - (count - 1) * (rh + TabletGap);
+        float maxLift = Math.Max(0f, firstY - (RowTop(f) + 2f * (rh + TabletGap)));
+        float lift = i < count - 2 ? Math.Min(4f * (rh + TabletGap), maxLift) : (rh + TabletGap);   // 확인·취소는 맨 아래에서 한 칸 위
+        return new CGRect(x0, bottomY - (count - 1 - i) * (rh + TabletGap) - lift, w, rh);
+    }
+    // 태블릿 모드 버튼 높이: 오른쪽 10칸이 세로에 다 들어가도록
+    float TabletRowH(Lay f)
+    {
+        float room = f.H - RowTop(f) - Math.Max(14f, f.InsBottom + 8f);
+        return Math.Min(Unit(f), (room - TabletGap * 9f) / 10f);
+    }
+
     CGRect? Left(Lay f, int row, int col, int span)
     {
         if (Mode != ControlMode.Keys) return null;
+        if (f.Tablet)
+        {
+            // 오른쪽 여백: 링 · 상태 · 다음 은 위쪽, 확인 · 취소 는 맨 아래(엄지가 닿는 곳)
+            if (row == 0) return TabletRightRow(f, TabletRightCount() - 2);            // 확인
+            if (row == 1 && col == 0) return TabletRightRow(f, TabletRightCount() - 1); // 취소
+            // 링(row1,col1) · 상태 · 다음. 평소엔 휴식=0, 상태=1, 다음=2, 링=3, 공격=4 순서(어빌 메뉴가 열리면 링=0)
+            if (row == 1) return TabletRightRow(f, _game.AbilityMenuOpen ? 0 : 3);
+            return TabletRightRow(f, 1 + col);
+        }
         if (f.Wide)
         {
             float unit = Unit(f), gap = 6f;
@@ -609,6 +652,15 @@ internal sealed class ShortcutOverlay : UIView
     CGRect? Arrow(Lay f, int dx, int dy)
     {
         if (Mode != ControlMode.Keys) return null;
+        if (f.Tablet)
+        {
+            // 방향키: 왼쪽 여백 맨 아래에 ▲ ▼ ◀ ▶ 순서로 세로 한 줄
+            float ah = TabletArrowH, ag = TabletArrowGap;
+            var (ax, aw) = SideBox(f, true);
+            int ai = dy < 0 ? 0 : dy > 0 ? 1 : dx < 0 ? 2 : 3;
+            float bottom = f.H - Math.Max(14f, f.InsBottom + 8f);
+            return new CGRect(ax, bottom - 4f * ah - 3f * ag + ai * (ah + ag), aw, ah);
+        }
         float n, cx, cy;
         if (f.Wide)
         {
@@ -631,6 +683,31 @@ internal sealed class ShortcutOverlay : UIView
     CGRect? Right(Lay f, int slot)
     {
         if (Mode != ControlMode.Keys) return null;
+        if (f.Tablet)
+        {
+            // 왼쪽 여백: 어빌 1~4 · 어빌 목록 · 아이템 (어빌 메뉴가 열리면 1~5번 칸). 나머지는 오른쪽 확인~다음 아래에 잇는다
+            int[] leftSlots = TabletLeftSlots();
+            int li = Array.IndexOf(leftSlots, slot);
+            float rowH = TabletRowH(f);
+            if (slot >= 8)   // 시스템 · 더보기 (어빌 메뉴가 열리면 ▲ ▼): 오른쪽 맨 위
+            {
+                var (tx, tw) = SideBox(f, false);
+                return new CGRect(tx, RowTop(f) + (slot - 8) * (rowH + TabletGap), tw, rowH);
+            }
+            if (li >= 0)
+            {
+                // 왼쪽 목록은 세로 가운데에 맞춘다 (아래 방향키와 겹치면 그 위로 올린다)
+                var (lx, lw) = SideBox(f, true);
+                float block = leftSlots.Length * rowH + (leftSlots.Length - 1) * TabletGap;
+                float arrowsTop = f.H - Math.Max(14f, f.InsBottom + 8f) - (4f * TabletArrowH + 3f * TabletArrowGap);
+                float y0 = Math.Max(RowTop(f), Math.Min(f.H / 2f - block / 2f, arrowsTop - 8f - block) - (rowH + TabletGap));   // 방향키와 떨어지게 한 칸 위로
+                return new CGRect(lx, y0 + li * (rowH + TabletGap), lw, rowH);
+            }
+            if (!_game.AbilityMenuOpen) return TabletRightRow(f, slot == 6 ? 0 : 4);   // 휴식=맨 위, 공격=링 다음
+            int ri = 3;   // 어빌 메뉴가 열리면 링·상태·다음 (3칸) 다음부터
+            for (int k = 0; k < slot; k++) if (Array.IndexOf(leftSlots, k) < 0) ri++;
+            return TabletRightRow(f, ri);
+        }
         if (f.Wide)
         {
             float unit = Unit(f), gap = 6f;
@@ -658,8 +735,22 @@ internal sealed class ShortcutOverlay : UIView
         bool wide = w >= h * 1.55f;
         // 폭이 좁은 화면(예: 4:3 에 가까운 iPad)에서는 게임 화면을 위쪽 버튼줄 아래로 내린다
         bool topNeeded = Mode == ControlMode.Keys && !wide;
-        Display.TopLimit = topNeeded ? (int)((TopBarH + 8f + (float)ins.Top) * _scale) : -1;
-        var frame = new Lay(w, h, game, wide, Math.Max((float)game.Left, 140f), ins);
+        float topPt = TopBarH + 8f + (float)ins.Top;
+
+        // 태블릿(가로, 4:3 에 가까움): 게임을 살짝 줄여 양옆에 검은 여백(TabletSide)을 만들고 버튼을 거기에 둔다.
+        // 게임은 4:3 이고 TopLimit 만큼 위아래가 줄어드는 만큼 양옆 여백이 늘어난다.
+        bool tablet = false;
+        if (topNeeded && w >= h * 1.2f)
+        {
+            float gameH = (w - 2f * TabletSide) * 0.75f;
+            float needTop = (h - gameH) / 2f;
+            float top = Math.Max(topPt, needTop);
+            if (h - 2f * top >= h * 0.68f) { tablet = true; topPt = top; }   // 게임이 너무 작아지면 예전 배치 유지
+        }
+        Display.TopLimit = topNeeded ? (int)(topPt * _scale) : -1;
+        float side = tablet ? (rw > 1 ? Math.Clamp((float)game.Left, 60f, 160f) : TabletSide)
+                            : Math.Max((float)game.Left, 140f);
+        var frame = new Lay(w, h, game, wide, tablet, side, ins);
 
         foreach (var (view, place) in _placed)
         {
