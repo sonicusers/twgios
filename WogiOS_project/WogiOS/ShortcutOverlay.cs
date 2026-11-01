@@ -7,6 +7,7 @@ using UIKit;
 using WogPatcher;
 using WogShim;
 using WogShim.Win32;
+using MenuEntry = WogShim.Win32.User32.MenuEntry;   // User32 안에 들어 있는 형식
 
 namespace WogiOS;
 
