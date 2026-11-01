@@ -525,6 +525,16 @@ internal sealed class ShortcutOverlay : UIView
     static float Unit(Lay f) => Math.Min(44f, (f.H - 48f) / 6.6f);
     float ActionsLeft(Lay f) => f.L + 34f * 3f + 14f;
     static float RowTop(Lay f) => 44f + f.InsTop;
+    // 폰(가로) 단축키 한 칸 높이: 오른쪽 5줄과 왼쪽 3줄 + 방향키 십자가 세로에 들어가는 만큼 키운다 (최대 56)
+    static float WideUnit(Lay f)
+    {
+        var (_, w) = SideBox(f, true);
+        float avail = f.H - RowTop(f) - Math.Max(14f, f.InsBottom + 8f);
+        float cross = 3f * Math.Min(w / 3f, 56f);
+        float uR = (avail - 4f * 6f) / 5f;
+        float uL = (avail - 2f * 6f - 8f - cross) / 3f;
+        return Math.Clamp(Math.Min(uR, uL), 30f, 56f);
+    }
 
     // index: -2 = 메뉴(동그라미 토글), -1 = ETC, 0..2 = 단축키/패드/숨김, 3 = 불투명도(◐)
     // 펼친 순서: 메뉴 · ETC · 단축키 · 패드 · ◐ · 숨김
@@ -560,7 +570,7 @@ internal sealed class ShortcutOverlay : UIView
     {
         float inset = left ? f.InsLeft : f.InsRight;
         float avail = Math.Max(40f, f.Side - inset);
-        float w = f.Tablet ? Math.Min(avail - 8f, 160f) : Math.Min(avail - 16f, 124f);   // 태블릿: 게임 화면 바로 앞(4pt)까지
+        float w = (f.Tablet || f.Wide) ? Math.Min(avail - 8f, 160f) : Math.Min(avail - 16f, 124f);   // 태블릿·폰(가로): 게임 화면 바로 앞(4pt)까지
         float x = left ? inset + (avail - w) / 2f : f.W - f.Side + (avail - w) / 2f;
         return (x, w);
     }
@@ -611,11 +621,16 @@ internal sealed class ShortcutOverlay : UIView
         }
         if (f.Wide)
         {
-            float unit = Unit(f), gap = 6f;
-            var (x0, w) = SideBox(f, true);
+            float unit = WideUnit(f), gap = 6f;
+            // 확인은 오른쪽 맨 아래 줄(시스템·더보기 와 자리 교환), 취소·링·상태·다음 은 오른쪽 맨 위 두 줄(어빌 1~4 와 자리 교환)
+            var (x0, w) = SideBox(f, false);
             float half = (w - gap) / 2f;
-            float top = RowTop(f) + row * (unit + gap);
-            float x = x0 + col * (half + gap);
+            int rr = row == 0 ? 4 : row - 1;
+            if (row == 2 && col == 1 && !_game.AbilityMenuOpen) rr = 0;   // 다음은 아이템 자리(맨 위 줄 오른쪽)로
+            if (row == 1 && col == 1 && !_game.AbilityMenuOpen) rr = 2;   // 링은 아이템 자리로 옮기고, 세·네 번째 줄 교환으로 휴식 옆(세 번째 줄)
+            float top = RowTop(f) + rr * (unit + gap);
+            int cc = (row == 1 && col == 1 && !_game.AbilityMenuOpen) ? 0 : col;   // 링은 휴식과 좌우를 맞바꿔 왼쪽 칸
+            float x = x0 + cc * (half + gap);
             return new CGRect(x, top, span == 2 ? w : half, unit);
         }
         if (row == 2) return GridCell(f, 1, col, 6);
@@ -665,7 +680,7 @@ internal sealed class ShortcutOverlay : UIView
         if (f.Wide)
         {
             var (x0, w) = SideBox(f, true);
-            n = Math.Min(Unit(f), (w) / 3f);
+            n = Math.Min(WideUnit(f), (w) / 3f);
             cx = x0 + w / 2f;
             cy = f.H - Math.Max(14f, f.InsBottom + 8f) - n * 1.5f;
         }
@@ -710,10 +725,15 @@ internal sealed class ShortcutOverlay : UIView
         }
         if (f.Wide)
         {
-            float unit = Unit(f), gap = 6f;
-            var (x0, w) = SideBox(f, false);
+            float unit = WideUnit(f), gap = 6f;
+            // 시스템·더보기(칸 8, 9)는 왼쪽 맨 위, 어빌 1~4(칸 0~3)는 그 아래 두 줄, 나머지는 오른쪽 세 번째 줄부터
+            bool toLeft = slot < 4 || slot >= 8;
+            var (x0, w) = SideBox(f, toLeft);
             float half = (w - gap) / 2f;
-            int r = slot / 2, c = slot % 2;
+            int r = slot >= 8 ? 0 : toLeft ? 1 + slot / 2 : slot / 2, c = slot % 2;
+            if (!toLeft && (r == 2 || r == 3)) r = 5 - r;               // 공격·어빌 목록 줄과 휴식·링 줄을 서로 교환
+            if (slot == 6 && !_game.AbilityMenuOpen) c = 1;   // 휴식은 링과 좌우를 맞바꿔 오른쪽 칸
+            if (slot == 7 && !_game.AbilityMenuOpen) r = 1;   // 아이템은 다음 자리(상태 옆)로
             return new CGRect(x0 + c * (half + gap), RowTop(f) + r * (unit + gap), half, unit);
         }
         if (_game.AbilityMenuOpen)
@@ -749,8 +769,11 @@ internal sealed class ShortcutOverlay : UIView
         }
         Display.TopLimit = topNeeded ? (int)(topPt * _scale) : -1;
         // 태블릿의 양옆 여백은 Display.Rect 가 아니라 계산으로 구한다(Rect 는 TopLimit 이 반영되기 전 값이 남아 있을 수 있다)
-        float side = tablet ? Math.Max(60f, (w - (h - 2f * topPt) * 4f / 3f) / 2f)
-                            : Math.Max((float)game.Left, 140f);
+        // 게임은 위아래를 최소 5% 남기고 4:3 으로 들어간다 (폰·태블릿 캡처로 확인한 값)
+        float topEff = Math.Max(topPt, h * 0.05f);
+        float side = tablet ? Math.Max(60f, (w - (h - 2f * topEff) * 4f / 3f) / 2f)
+                  : wide ? Math.Max(60f, (w - h * 0.9f * 4f / 3f) / 2f)
+                  : Math.Max((float)game.Left, 140f);
         var frame = new Lay(w, h, game, wide, tablet, side, ins);
 
         foreach (var (view, place) in _placed)
