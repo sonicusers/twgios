@@ -10,7 +10,7 @@ using WinMessages = WogShim.Win32.Messages;
 
 namespace WogiOS;
 
-// iOS TouchInput: UIKit 이벤트를 게임 입력으로 (탭=클릭, 드래그, 길게=우클릭, 두 손가락=휠/우클릭)
+// Android TouchInput 을 UIKit 이벤트로 옮긴 것 (탭=클릭, 드래그, 길게=우클릭, 두 손가락=휠/우클릭)
 internal sealed class TouchInput
 {
     enum Mode { None, Pending, Drag, Pan, Hold, TwoFinger, Scroll }

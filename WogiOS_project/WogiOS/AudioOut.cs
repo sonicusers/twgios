@@ -81,7 +81,7 @@ internal sealed unsafe class AudioOut : IAudioSink
             if (gen == Volatile.Read(ref _gen)) Interlocked.Add(ref _played, frames);
         });
 
-        // iOS 오디오 출력: 재생 속도보다 앞서 쌓이면 기다린다 (최대 0.25초 앞까지)
+        // 안드로이드 AudioTrack 처럼, 재생 속도보다 앞서 쌓이면 기다린다 (최대 0.25초 앞까지)
         long lead = _rate / 4;
         var sw = Stopwatch.StartNew();
         while (!_disposed && Interlocked.Read(ref _scheduled) - Interlocked.Read(ref _played) > lead
