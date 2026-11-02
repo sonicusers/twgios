@@ -12,7 +12,7 @@ using MenuEntry = WogShim.Win32.User32.MenuEntry;   // User32 안에 들어 있�
 
 namespace WogiOS;
 
-// 안드로이드 0.20 의 "단축키 모드"(ControlsOverlay / Key / TextBar / GameMenu)를 UIKit 으로 옮긴 것.
+// Ios 0.20 의 "단축키 모드"(ControlsOverlay / Key / TextBar / GameMenu)를 UIKit 으로 옮긴 것.
 // 화면 위에 키보드 단축키 버튼을 놓고, 누르면 게임에 키 입력(WogShim.Win32.Messages.PostKey)을 보낸다.
 // 기존 PadOverlay(LT/LB/XYAB 화면 패드)는 그대로 두고, 위쪽 [단축키|패드|숨김] 탭으로 모드를 고른다.
 
