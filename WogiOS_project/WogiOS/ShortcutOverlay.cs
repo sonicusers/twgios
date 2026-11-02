@@ -265,6 +265,10 @@ internal sealed class ShortcutOverlay : UIView
     readonly ShortcutKey[] _modeTabs = new ShortcutKey[3];
     ShortcutKey _menuKey;     // ETC (기존 게임 메뉴)
     ShortcutKey _opacityTab;  // 불투명도 탭 (◐ 아이콘)
+    ShortcutKey _speedKey;    // 메뉴 옆 동그라미: ×1 ×2 ×3 으로 게임 속도 전환 (게임 설정창의 '게임 속도' 를 대신 눌러 준다)
+    int _speed = 1;
+    bool _speedBusy;
+    UIView _speedCover;       // 속도를 바꾸는 동안 설정창이 보이지 않게 게임 화면을 가리는 검은 막
     ShortcutKey _toggleKey;   // 새 "메뉴" 버튼: 누르면 [ETC 단축키 패드 숨김] 이 펼쳐진다
     ShortcutTextBar _textBar;
     GameState.Snapshot _game = GameState.Current;
@@ -337,6 +341,12 @@ internal sealed class ShortcutOverlay : UIView
         Add(_toggleKey, f => TopSlot(f, -2));
         _toggleKey.Pressed = down => { if (!down) SetExpanded(!_expanded); };
 
+        _speed = (int)NSUserDefaults.StandardUserDefaults.IntForKey("wogSpeed");
+        if (_speed < 1 || _speed > 3) _speed = 1;
+        _speedKey = new ShortcutKey("×" + _speed, "", _speed > 1 ? KeyKind.Accent : KeyKind.Plain) { Round = true };
+        Add(_speedKey, f => TopSlot(f, -3));
+        _speedKey.Pressed = down => { if (!down) CycleSpeed(); };
+
         _menuKey = new ShortcutKey("ETC") { Round = true };
         Add(_menuKey, f => TopSlot(f, -1));
         _menuKey.Pressed = down =>
@@ -380,10 +390,109 @@ internal sealed class ShortcutOverlay : UIView
         foreach (var (v, _) in _placed)
         {
             if (v is not ShortcutKey k) continue;
-            bool top = ReferenceEquals(k, _toggleKey) || ReferenceEquals(k, _menuKey) || ReferenceEquals(k, _opacityTab)
+            bool top = ReferenceEquals(k, _toggleKey) || ReferenceEquals(k, _speedKey) || ReferenceEquals(k, _menuKey) || ReferenceEquals(k, _opacityTab)
                        || Array.IndexOf((Array)_modeTabs, (object)k) >= 0;
             if (!top) k.BaseAlpha = a;
         }
+    }
+
+    // ---- 게임 속도 (×1 → ×2 → ×3 → ×1) ----
+    // 게임 안 설정창(메뉴 → 설정 → 게임 → 게임 속도) 을 열고, 탭·◀▶ 를 마우스 클릭으로 대신 눌러 준다.
+    // 앱은 현재 값을 읽을 수 없으므로 매번 ◀ 를 여러 번 눌러 맨 아래(1배)로 내린 뒤 ▶ 를 (목표-1)번 누른다.
+    // 설정창 위치는 게임 화면(Display.Rect) 대비 비율로 잡는다 (4:3 캔버스에 맞춰 같은 비율로 그려진다고 보고).
+    const float TabGameX = 0.171f, TabGameY = 0.2527f;        // '게임' 탭
+    const float SpeedLeftX = 0.5444f, SpeedRightX = 0.8372f, SpeedY = 0.2527f;   // '게임 속도' ◀ ▶
+    const float CloseX = 0.8444f, CloseY = 0.8622f;           // '닫기'
+    const int SpeedMax = 3, SpeedResetClicks = 5;
+
+    void CycleSpeed()
+    {
+        if (_speedBusy) return;
+        _speedBusy = true;
+        _speed = _speed % SpeedMax + 1;
+        NSUserDefaults.StandardUserDefaults.SetInt((nint)_speed, "wogSpeed");
+        _speedKey.Set("×" + _speed, "", _speed > 1 ? KeyKind.Accent : KeyKind.Plain);
+        int target = _speed;
+        ShowSpeedCover(target);
+        User32.OpenMenuBar(tree => InvokeOnMainThread(() => RunSpeedSteps(FindMenuCommand(tree, "설정"), target)));
+    }
+
+    static uint FindMenuCommand(IReadOnlyList<MenuEntry> tree, string name)
+    {
+        if (tree == null) return 0u;
+        foreach (var e in tree)   // 맨 위 단계부터 먼저 찾는다
+        {
+            if (e.Separator || e.Submenu != null || e.Command == 0u || string.IsNullOrEmpty(e.Text)) continue;
+            string t = e.Text.Replace("&", "").Replace(".", "").Trim();
+            int tab = t.IndexOf('\t'); if (tab >= 0) t = t.Substring(0, tab).Trim();
+            if (t == name) return e.Command;
+        }
+        foreach (var e in tree)
+        {
+            if (e.Submenu == null) continue;
+            uint c = FindMenuCommand(e.Submenu, name);
+            if (c != 0u) return c;
+        }
+        return 0u;
+    }
+
+    void RunSpeedSteps(uint settingsCommand, int target)
+    {
+        if (settingsCommand == 0u) { HideSpeedCover(); _speedBusy = false; return; }   // 메뉴에서 '설정' 을 못 찾았다
+        double t = 0;
+        void At(double dt, Action a) { t += dt; NSTimer.CreateScheduledTimer(t, _ => a()); }
+        At(0.0, () => User32.RunMenuCommand(settingsCommand));
+        At(0.5, () => ClickGame(TabGameX, TabGameY));                              // 게임 탭
+        At(0.25, () => { });
+        for (int i = 0; i < SpeedResetClicks; i++) At(0.15, () => ClickGame(SpeedLeftX, SpeedY));      // 맨 아래(1배)로
+        for (int i = 1; i < target; i++) At(0.15, () => ClickGame(SpeedRightX, SpeedY));               // 목표 배속까지
+        At(0.3, () => ClickGame(CloseX, CloseY));                                  // 닫기
+        At(0.35, () => { HideSpeedCover(); _speedBusy = false; });
+        At(2.0, () => HideSpeedCover());                                           // 혹시 중간에 어긋나도 검은 막이 남지 않게
+    }
+
+    // 속도를 바꾸는 1~2초 동안 설정창이 번쩍이지 않게 게임 화면을 검은 막으로 가린다 (버튼 줄은 막 위에 그대로 있다)
+    void ShowSpeedCover(int speed)
+    {
+        HideSpeedCover();
+        var host = Superview;
+        if (host == null) return;
+        var cover = new UIView(host.Bounds)
+        {
+            BackgroundColor = UIColor.Black,
+            UserInteractionEnabled = true,   // 그동안 게임 화면 터치는 막는다
+            AutoresizingMask = UIViewAutoresizing.FlexibleWidth | UIViewAutoresizing.FlexibleHeight,
+        };
+        var text = new UILabel(cover.Bounds)
+        {
+            Text = "게임 속도 ×" + speed,
+            TextColor = UIColor.FromWhiteAlpha(1f, 0.55f),
+            TextAlignment = UITextAlignment.Center,
+            Font = UIFont.BoldSystemFontOfSize(20f),
+            AutoresizingMask = UIViewAutoresizing.FlexibleWidth | UIViewAutoresizing.FlexibleHeight,
+        };
+        cover.AddSubview(text);
+        host.InsertSubviewBelow(cover, this);
+        _speedCover = cover;
+    }
+
+    void HideSpeedCover()
+    {
+        var cover = _speedCover;
+        if (cover == null) return;
+        _speedCover = null;
+        UIView.Animate(0.15, () => cover.Alpha = 0f, () => cover.RemoveFromSuperview());
+    }
+
+    // 게임 화면의 (fx, fy) 비율 위치를 마우스로 한 번 클릭한다
+    static void ClickGame(float fx, float fy)
+    {
+        var (rx, ry, rw, rh) = Display.Rect;
+        float x = rx + rw * fx, y = ry + rh * fy;
+        var (cx, cy) = Display.ToClient(x, y);
+        WogShim.Win32.Messages.PostMouse(512, cx, cy);
+        WogShim.Win32.Messages.PostMouse(513, cx, cy);
+        NSTimer.CreateScheduledTimer(0.06, _ => WogShim.Win32.Messages.PostMouse(514, cx, cy));
     }
 
     void SetExpanded(bool on)
@@ -549,6 +658,11 @@ internal sealed class ShortcutOverlay : UIView
             float total = open ? d + gap + w * 5f + gap * 4f : d;
             float x0 = (f.W - total) / 2f;
             return new CGRect(x0, Math.Max(0f, y - (d - bar) / 2f), d, d);
+        }
+        if (index == -3)   // 속도 동그라미: 메뉴 동그라미 바로 왼쪽
+        {
+            var m = TopSlot(f, -2);
+            return new CGRect((float)m.X - gap - d, (float)m.Y, d, d);
         }
         if (!open) return new CGRect((f.W - w) / 2f, y, w, bar);   // 컨트롤러 연결 시 ETC 만
         float t = d + gap + w * 5f + gap * 4f;
@@ -783,7 +897,9 @@ internal sealed class ShortcutOverlay : UIView
             bool isText = ReferenceEquals(view, _textBar);
             CGRect? rect;
             bool isToggle = ReferenceEquals(view, _toggleKey);
-            if (isToggle) rect = _physical ? null : place(frame);                 // 컨트롤러 연결 시엔 ETC 만 남긴다
+            bool isSpeed = ReferenceEquals(view, _speedKey);
+            if (isSpeed) rect = _physical ? null : place(frame);                  // 어느 모드에서도 보인다 (컨트롤러 연결 시 제외)
+            else if (isToggle) rect = _physical ? null : place(frame);                 // 컨트롤러 연결 시엔 ETC 만 남긴다
             else if (isMenu) rect = (_expanded || _physical) ? place(frame) : null;
             else if (isTab) rect = (_expanded && !_physical) ? place(frame) : null;
             else if (_physical) rect = null;
