@@ -13,7 +13,7 @@ using WogShim.Gpu;
 
 namespace WogiOS;
 
-// Android 의 AndroidHost(EGL + AudioTrack)에 해당하는 iOS 구현 (EAGL + AVAudioEngine)
+// iOS 호스트 구현 (EAGL + AVAudioEngine)
 internal sealed unsafe class IosHost : IHost
 {
     const nuint GL_RENDERBUFFER = 0x8D41;
