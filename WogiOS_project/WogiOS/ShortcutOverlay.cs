@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
-using System.Threading.Tasks;
 using CoreAnimation;
 using CoreGraphics;
 using Foundation;
@@ -267,7 +266,6 @@ internal sealed class ShortcutOverlay : UIView
     ShortcutKey _menuKey;     // ETC (기존 게임 메뉴)
     ShortcutKey _opacityTab;  // 불투명도 탭 (◐ 아이콘)
     ShortcutKey _toggleKey;   // 새 "메뉴" 버튼: 누르면 [ETC 단축키 패드 숨김] 이 펼쳐진다
-    ShortcutKey _speedKey;    // 메뉴 오른쪽 동그라미: 게임 배속 x1 → x1.5 → x2 토글
     ShortcutTextBar _textBar;
     GameState.Snapshot _game = GameState.Current;
     bool _physical;
@@ -296,8 +294,7 @@ internal sealed class ShortcutOverlay : UIView
         Display.Changed += () => InvokeOnMainThread(SetNeedsLayout);
         GameState.Changed += snap => InvokeOnMainThread(() =>
         {
-            bool relayout = snap.AbilityMenuOpen != _game.AbilityMenuOpen || (snap.TextEntry == null) != (_game.TextEntry == null)
-                || (snap.Abilities.Count > 0 || snap.PlayerTurn) != (_game.Abilities.Count > 0 || _game.PlayerTurn);
+            bool relayout = snap.AbilityMenuOpen != _game.AbilityMenuOpen || (snap.TextEntry == null) != (_game.TextEntry == null);
             _game = snap;
             UpdateShortcutLabels();
             if (snap.TextEntry != null) _textBar.Sync(snap.TextEntry, snap.TextMax);
@@ -306,9 +303,6 @@ internal sealed class ShortcutOverlay : UIView
         });
         ApplyMode(false);
     }
-
-    // 전투 중인지: 전투에서만 어빌 목록이 채워지고 내 턴이 켜진다 (타이틀·메뉴에서는 비어 있음)
-    bool InBattle => _game.Abilities.Count > 0 || _game.PlayerTurn;
 
     // 블루투스 컨트롤러가 있으면 메뉴 버튼만 남긴다
     public void SetPhysical(bool on)
@@ -342,10 +336,6 @@ internal sealed class ShortcutOverlay : UIView
         _toggleKey = new ShortcutKey("메뉴") { Round = true };
         Add(_toggleKey, f => TopSlot(f, -2));
         _toggleKey.Pressed = down => { if (!down) SetExpanded(!_expanded); };
-
-        _speedKey = new ShortcutKey(Speeds[0].Label) { Round = true };
-        Add(_speedKey, f => TopSlot(f, -3));
-        _speedKey.Pressed = down => { if (!down) CycleSpeed(); };
 
         _menuKey = new ShortcutKey("ETC") { Round = true };
         Add(_menuKey, f => TopSlot(f, -1));
@@ -390,160 +380,11 @@ internal sealed class ShortcutOverlay : UIView
         foreach (var (v, _) in _placed)
         {
             if (v is not ShortcutKey k) continue;
-            bool top = ReferenceEquals(k, _toggleKey) || ReferenceEquals(k, _speedKey) || ReferenceEquals(k, _menuKey) || ReferenceEquals(k, _opacityTab)
+            bool top = ReferenceEquals(k, _toggleKey) || ReferenceEquals(k, _menuKey) || ReferenceEquals(k, _opacityTab)
                        || Array.IndexOf((Array)_modeTabs, (object)k) >= 0;
             if (!top) k.BaseAlpha = a;
         }
     }
-
-    // ---- 전투 배속 토글 (x1 → x1.5 → x2 → x1 …) ----
-    static readonly (string Label, KeyKind Kind)[] Speeds =
-    {
-        ("x1", KeyKind.Plain), ("x1.5", KeyKind.Accent), ("x2", KeyKind.Accent),
-    };
-    int _speedIdx;
-    bool _speedBusy;
-    UIView _dim;
-    UILabel _dimLabel;
-
-    void CycleSpeed()
-    {
-        if (_speedBusy) return;
-        _ = ChangeSpeedAsync((_speedIdx + 1) % Speeds.Length);
-    }
-
-    // 암전(즉시, 완전 검정) → 설정 창 열기 → 속도 값 바꾸기 → Esc 로 닫기 → 암전 해제
-    async Task ChangeSpeedAsync(int next)
-    {
-        _speedBusy = true;
-        ShowDim($"게임 속도를 {Speeds[next].Label} 배속으로 전환합니다");
-        try
-        {
-            await Task.Delay(150);
-            if (!await OpenSettingsWindowAsync())
-            {
-                _dimLabel.Text = "설정 창을 열지 못했어요";   // Esc 는 보내지 않는다 (전투 화면에서 시스템 메뉴가 열릴 수 있음)
-                await Task.Delay(1200);
-                return;
-            }
-            await Task.Delay(500);              // 설정 창이 뜰 시간
-            await ApplySpeedOptionAsync(next);  // ★ 속도 값 바꾸기 (아래 메서드)
-            await Task.Delay(500);              // 값이 반영될 시간
-            await PressOnceAsync(27);           // Esc 한 번 = 닫기 (해상도와 상관없음)
-            await Task.Delay(400);              // 창이 완전히 닫힐 시간
-            _speedIdx = next;
-            _speedKey.Set(Speeds[next].Label, "", Speeds[next].Kind);
-        }
-        catch (Exception) { }
-        finally
-        {
-            HideDim();
-            _speedBusy = false;
-        }
-    }
-
-    // 설정 창 안의 버튼 위치: "게임 화면 사각형"에 대한 비율 (픽셀이 아니라 비율이라 화면 크기가 달라도 따라간다).
-    // 1280x960 설정 창 스크린샷 한 장 기준 값이다. 다른 해상도에서 빗나가면 이 네 값만 고치면 된다.
-    const float TabGameX = 0.136f, TabGameY = 0.227f;        // 왼쪽 "게임" 탭
-    const float SpeedNextX = 0.875f, SpeedNextY = 0.230f;    // "게임 속도" 줄의 ▶
-
-    // 게임 속도 값은 보통(원본) → 1.5배 → 2배 → 보통(원본) 으로 ▶ 를 누를 때마다 순환한다.
-    // 그래서 x1→x1.5, x1.5→x2, x2→x1 모두 ▶ 한 번이면 된다. (방향키는 먹지 않아 직접 터치해야 한다)
-    async Task ApplySpeedOptionAsync(int index)
-    {
-        int presses = (index - _speedIdx + Speeds.Length) % Speeds.Length;
-        await ClickGameAsync(TabGameX, TabGameY);          // 어느 탭이 열려 있든 "게임" 탭으로
-        await Task.Delay(250);
-        for (int i = 0; i < presses; i++)
-        {
-            await ClickGameAsync(SpeedNextX, SpeedNextY);  // ▶ 한 번
-            await Task.Delay(250);
-        }
-    }
-
-    // 게임 화면 사각형 안의 비율 위치(fx, fy)를 한 번 터치한 것처럼 게임에 보낸다 (TouchInput 의 탭과 같은 방식)
-    static async Task ClickGameAsync(float fx, float fy)
-    {
-        var (rx, ry, rw, rh) = Display.Rect;
-        if (rw <= 1) return;
-        float x = rx + fx * rw, y = ry + fy * rh;
-        var (cx, cy) = Display.ToClient(x, y);
-        WogShim.Win32.Messages.PostMouse(513u, cx, cy);   // 왼쪽 버튼 누름
-        await Task.Delay(40);
-        WogShim.Win32.Messages.PostMouse(514u, cx, cy);   // 왼쪽 버튼 뗌
-    }
-
-    static async Task PressOnceAsync(int vk)
-    {
-        Tap(vk, true);
-        await Task.Delay(50);
-        Tap(vk, false);
-    }
-
-    // ETC 메뉴(게임 메뉴 막대)에서 "설정" 항목을 찾아 실행한다. 못 찾으면 false
-    Task<bool> OpenSettingsWindowAsync()
-    {
-        var tcs = new TaskCompletionSource<bool>();
-        User32.OpenMenuBar(tree =>
-        {
-            InvokeOnMainThread(() =>
-            {
-                uint cmd = FindMenuCommand(tree, "설정", true);
-                if (cmd == 0) cmd = FindMenuCommand(tree, "설정", false);
-                if (cmd != 0) User32.RunMenuCommand(cmd);
-                tcs.TrySetResult(cmd != 0);
-            });
-        });
-        return tcs.Task;
-    }
-
-    static uint FindMenuCommand(IReadOnlyList<MenuEntry> items, string text, bool exact)
-    {
-        if (items == null) return 0;
-        foreach (var e in items)
-        {
-            if (e.Submenu != null)
-            {
-                uint c = FindMenuCommand(e.Submenu, text, exact);
-                if (c != 0) return c;
-            }
-            else if (e.Command != 0 && e.Text != null)
-            {
-                string t = e.Text.Trim();
-                if (exact ? t == text : t.Contains(text)) return e.Command;
-            }
-        }
-        return 0;
-    }
-
-    // 완전 검정 + 메시지. 애니메이션 없이 즉시 덮고, 이 뷰가 터치를 막아서 도중에 조작이 끼어들지 못한다
-    void ShowDim(string text)
-    {
-        if (_dim == null)
-        {
-            _dim = new UIView
-            {
-                BackgroundColor = UIColor.Black,
-                UserInteractionEnabled = true,
-                AutoresizingMask = UIViewAutoresizing.FlexibleDimensions,
-            };
-            _dimLabel = new UILabel
-            {
-                TextColor = UIColor.White,
-                TextAlignment = UITextAlignment.Center,
-                Lines = 0,
-                Font = UIFont.BoldSystemFontOfSize(20f),
-                AutoresizingMask = UIViewAutoresizing.FlexibleDimensions,
-            };
-            _dim.AddSubview(_dimLabel);
-        }
-        _dim.Frame = Bounds;
-        _dimLabel.Frame = _dim.Bounds;
-        _dimLabel.Text = text;
-        AddSubview(_dim);   // 맨 위로
-    }
-
-    void HideDim() => _dim?.RemoveFromSuperview();
 
     void SetExpanded(bool on)
     {
@@ -708,12 +549,6 @@ internal sealed class ShortcutOverlay : UIView
             float total = open ? d + gap + w * 5f + gap * 4f : d;
             float x0 = (f.W - total) / 2f;
             return new CGRect(x0, Math.Max(0f, y - (d - bar) / 2f), d, d);
-        }
-        if (index == -3)   // 배속 동그라미: 메뉴(펼쳤을 땐 맨 오른쪽 탭) 바로 오른쪽
-        {
-            float totalS = open ? d + gap + w * 5f + gap * 4f : d;
-            float xs = Math.Min((f.W - totalS) / 2f + totalS + gap, f.W - d - 4f);
-            return new CGRect(xs, Math.Max(0f, y - (d - bar) / 2f), d, d);
         }
         if (!open) return new CGRect((f.W - w) / 2f, y, w, bar);   // 컨트롤러 연결 시 ETC 만
         float t = d + gap + w * 5f + gap * 4f;
@@ -937,8 +772,7 @@ internal sealed class ShortcutOverlay : UIView
         // 게임은 위아래를 최소 5% 남기고 4:3 으로 들어간다 (폰·태블릿 캡처로 확인한 값)
         float topEff = Math.Max(topPt, h * 0.05f);
         float side = tablet ? Math.Max(60f, (w - (h - 2f * topEff) * 4f / 3f) / 2f)
-                  : wide ? (InBattle && rw > 1 ? Math.Max(60f, (float)game.Left)   // 폰(가로) 전투: 게임이 화면 높이 100% 로 꽉 차므로 실제 왼쪽 끝까지
-                                             : Math.Max(60f, (w - h * 0.9f * 4f / 3f) / 2f))   // 폰(가로) 타이틀: 게임이 90% 로 그려짐
+                  : wide ? Math.Max(60f, (w - h * 4f / 3f) / 2f)   // 폰(가로): 전투 화면(높이 100%, 4:3) 기준으로 고정. 게임 화면 위치를 읽지 않으므로 화면이 바뀌어도 변하지 않는다
                   : Math.Max((float)game.Left, 140f);
         var frame = new Lay(w, h, game, wide, tablet, side, ins);
 
@@ -949,7 +783,7 @@ internal sealed class ShortcutOverlay : UIView
             bool isText = ReferenceEquals(view, _textBar);
             CGRect? rect;
             bool isToggle = ReferenceEquals(view, _toggleKey);
-            if (isToggle || ReferenceEquals(view, _speedKey)) rect = _physical ? null : place(frame);                 // 컨트롤러 연결 시엔 ETC 만 남긴다
+            if (isToggle) rect = _physical ? null : place(frame);                 // 컨트롤러 연결 시엔 ETC 만 남긴다
             else if (isMenu) rect = (_expanded || _physical) ? place(frame) : null;
             else if (isTab) rect = (_expanded && !_physical) ? place(frame) : null;
             else if (_physical) rect = null;
