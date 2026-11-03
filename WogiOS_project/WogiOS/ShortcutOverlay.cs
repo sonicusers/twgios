@@ -294,7 +294,8 @@ internal sealed class ShortcutOverlay : UIView
         Display.Changed += () => InvokeOnMainThread(SetNeedsLayout);
         GameState.Changed += snap => InvokeOnMainThread(() =>
         {
-            bool relayout = snap.AbilityMenuOpen != _game.AbilityMenuOpen || (snap.TextEntry == null) != (_game.TextEntry == null);
+            bool relayout = snap.AbilityMenuOpen != _game.AbilityMenuOpen || (snap.TextEntry == null) != (_game.TextEntry == null)
+                || (snap.Abilities.Count > 0 || snap.PlayerTurn) != (_game.Abilities.Count > 0 || _game.PlayerTurn);
             _game = snap;
             UpdateShortcutLabels();
             if (snap.TextEntry != null) _textBar.Sync(snap.TextEntry, snap.TextMax);
@@ -771,7 +772,10 @@ internal sealed class ShortcutOverlay : UIView
         // 태블릿의 양옆 여백은 Display.Rect 가 아니라 계산으로 구한다(Rect 는 TopLimit 이 반영되기 전 값이 남아 있을 수 있다)
         // 게임은 위아래를 최소 5% 남기고 4:3 으로 들어간다 (폰·태블릿 캡처로 확인한 값)
         float topEff = Math.Max(topPt, h * 0.05f);
-        float side = tablet ? Math.Max(60f, (w - (h - 2f * topEff) * 4f / 3f) / 2f)
+        // 전투 화면은 게임이 높이 100% 로 꽉 차서 양옆 여백이 계산값보다 좁다 → 실제 게임 왼쪽 끝까지만 버튼을 둔다 (태블릿도 폰과 동일)
+        bool inBattleNow = _game.Abilities.Count > 0 || _game.PlayerTurn;
+        float side = tablet ? (inBattleNow && rw > 1 ? Math.Max(60f, (float)game.Left)
+                                                    : Math.Max(60f, (w - (h - 2f * topEff) * 4f / 3f) / 2f))
                   : wide ? Math.Max(60f, (w - h * 4f / 3f) / 2f)   // 폰(가로): 전투 화면(높이 100%, 4:3) 기준으로 고정. 게임 화면 위치를 읽지 않으므로 화면이 바뀌어도 변하지 않는다
                   : Math.Max((float)game.Left, 140f);
         var frame = new Lay(w, h, game, wide, tablet, side, ins);
