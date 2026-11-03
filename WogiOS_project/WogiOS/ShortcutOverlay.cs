@@ -772,7 +772,7 @@ internal sealed class ShortcutOverlay : UIView
         // 게임은 위아래를 최소 5% 남기고 4:3 으로 들어간다 (폰·태블릿 캡처로 확인한 값)
         float topEff = Math.Max(topPt, h * 0.05f);
         float side = tablet ? Math.Max(60f, (w - (h - 2f * topEff) * 4f / 3f) / 2f)
-                  : wide ? (rw > 1 ? Math.Max(60f, (float)game.Left)   // 폰(가로): 지금 게임 화면(타이틀 90%·전투 100% 등) 실제 왼쪽 끝까지
+                  : wide ? (rw > 1 ? Math.Max(60f, (float)game.Left)   // 폰(가로): 전투 화면(높이 100%) 기준으로 맞춘다. 타이틀은 조금 더 좁게 보여도 그대로 둔다
                                    : Math.Max(60f, (w - h * 0.9f * 4f / 3f) / 2f))
                   : Math.Max((float)game.Left, 140f);
         var frame = new Lay(w, h, game, wide, tablet, side, ins);
