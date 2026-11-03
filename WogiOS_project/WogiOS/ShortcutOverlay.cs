@@ -67,6 +67,18 @@ internal sealed class ShortcutKey : UIView
         set { if (Math.Abs(_baseAlpha - value) < 0.001f) return; _baseAlpha = value; Refresh(); }
     }
 
+    // 글자가 버튼 폭보다 길면 잘라내지 않고 두 줄로 나눠 쓴다 (띄어쓰기가 있으면 거기서, 없으면 가운데에서)
+    string _shown;
+    static string SplitTwo(string t)
+    {
+        int mid = t.Length / 2, best = -1;
+        for (int i = 1; i < t.Length - 1; i++)
+            if (t[i] == ' ' && (best < 0 || Math.Abs(i - mid) < Math.Abs(best - mid))) best = i;
+        if (best >= 0) return t.Substring(0, best) + "\n" + t.Substring(best + 1);
+        int cut = (t.Length + 1) / 2;
+        return t.Substring(0, cut) + "\n" + t.Substring(cut);
+    }
+
     public ShortcutKey(string label, string hint = "", KeyKind kind = KeyKind.Plain)
     {
         MultipleTouchEnabled = true;
@@ -89,7 +101,7 @@ internal sealed class ShortcutKey : UIView
     public void Set(string label, string hint, KeyKind kind, bool dim = false)
     {
         if (Label == label && Hint == hint && Kind == kind && Dim == dim) return;
-        Label = label; Hint = hint; Kind = kind; Dim = dim;
+        Label = label; Hint = hint; Kind = kind; Dim = dim; _shown = null;
         Refresh();
         SetNeedsLayout();
     }
@@ -110,7 +122,7 @@ internal sealed class ShortcutKey : UIView
         }
         BackgroundColor = _isDown ? PadStyle.C(175, 169, 236, 150 / 255f) : fill;
         Layer.BorderColor = ring.CGColor;
-        _label.Text = Label;
+        _label.Text = _shown ?? Label;
         _hint.Text = Hint;
         _label.TextColor = PadStyle.C(241, 238, 250, 235 / 255f);
         _hint.TextColor = PadStyle.C(169, 163, 187, 200 / 255f);
@@ -124,6 +136,26 @@ internal sealed class ShortcutKey : UIView
         Layer.CornerRadius = Round ? Math.Min(w, h) / 2f : 9f;
         bool showHint = Hint.Length > 0 && h > 30f;
         float labelSize = Math.Min(13f, Math.Min(h * (showHint ? 0.36f : 0.45f), w / Math.Max(2.2f, Label.Length * 0.95f)));
+        string text = Label;
+        bool wrap = false;
+        if (!Round && !_opacityIcon && Label.Length >= 3 && h >= 28f)
+        {
+            float baseSize = Math.Min(13f, h * (showHint ? 0.36f : 0.45f));   // 폭에 맞춰 줄이기 전의 글자 크기로 넘치는지 본다
+            var f0 = Kind == KeyKind.Faint ? UIFont.SystemFontOfSize(baseSize) : UIFont.BoldSystemFontOfSize(baseSize);
+            float tw = (float)((NSString)Label).GetSizeUsingAttributes(new UIStringAttributes { Font = f0 }).Width;
+            if (tw > w - 8f) { wrap = true; text = SplitTwo(Label); }
+        }
+        if (wrap)
+        {
+            showHint = false;   // 두 줄로 나눈 버튼은 아래 작은 힌트 글자를 숨긴다
+            int nl = text.IndexOf('\n');
+            int per = Math.Max(nl, text.Length - nl - 1);
+            labelSize = Math.Max(9f, Math.Min(13f, Math.Min((w - 8f) / (per * 1.05f), (h - 6f) / 2.5f)));
+        }
+        _shown = wrap ? text : null;
+        _label.Lines = wrap ? 2 : 1;
+        _label.AdjustsFontSizeToFitWidth = !wrap;
+        _label.Text = text;
         _label.Font = Kind == KeyKind.Faint ? UIFont.SystemFontOfSize(labelSize) : UIFont.BoldSystemFontOfSize(labelSize);
         _hint.Font = UIFont.SystemFontOfSize(Math.Min(10.5f, h * 0.26f));
         _hint.Hidden = !showHint;
@@ -294,8 +326,7 @@ internal sealed class ShortcutOverlay : UIView
         Display.Changed += () => InvokeOnMainThread(SetNeedsLayout);
         GameState.Changed += snap => InvokeOnMainThread(() =>
         {
-            bool relayout = snap.AbilityMenuOpen != _game.AbilityMenuOpen || (snap.TextEntry == null) != (_game.TextEntry == null)
-                || (snap.Abilities.Count > 0 || snap.PlayerTurn) != (_game.Abilities.Count > 0 || _game.PlayerTurn);
+            bool relayout = snap.AbilityMenuOpen != _game.AbilityMenuOpen || (snap.TextEntry == null) != (_game.TextEntry == null);
             _game = snap;
             UpdateShortcutLabels();
             if (snap.TextEntry != null) _textBar.Sync(snap.TextEntry, snap.TextMax);
@@ -772,10 +803,8 @@ internal sealed class ShortcutOverlay : UIView
         // 태블릿의 양옆 여백은 Display.Rect 가 아니라 계산으로 구한다(Rect 는 TopLimit 이 반영되기 전 값이 남아 있을 수 있다)
         // 게임은 위아래를 최소 5% 남기고 4:3 으로 들어간다 (폰·태블릿 캡처로 확인한 값)
         float topEff = Math.Max(topPt, h * 0.05f);
-        // 전투 화면은 게임이 높이 100% 로 꽉 차서 양옆 여백이 계산값보다 좁다 → 실제 게임 왼쪽 끝까지만 버튼을 둔다 (태블릿도 폰과 동일)
-        bool inBattleNow = _game.Abilities.Count > 0 || _game.PlayerTurn;
-        float side = tablet ? (inBattleNow && rw > 1 ? Math.Max(60f, (float)game.Left)
-                                                    : Math.Max(60f, (w - (h - 2f * topEff) * 4f / 3f) / 2f))
+        // 태블릿도 폰(가로)과 같이 전투 화면(높이 100%, 4:3) 기준으로 여백을 고정한다 → 타이틀·전투에서 버튼 크기가 바뀌지 않는다
+        float side = tablet ? Math.Max(60f, (w - h * 4f / 3f) / 2f)
                   : wide ? Math.Max(60f, (w - h * 4f / 3f) / 2f)   // 폰(가로): 전투 화면(높이 100%, 4:3) 기준으로 고정. 게임 화면 위치를 읽지 않으므로 화면이 바뀌어도 변하지 않는다
                   : Math.Max((float)game.Left, 140f);
         var frame = new Lay(w, h, game, wide, tablet, side, ins);
