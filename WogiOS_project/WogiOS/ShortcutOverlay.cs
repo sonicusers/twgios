@@ -268,6 +268,8 @@ internal sealed class ShortcutOverlay : UIView
     readonly NSTimer[] _lpTimer = new NSTimer[4];
     readonly bool[] _lpFired = new bool[4];
     readonly bool[] _abilPath = new bool[4];
+    bool _userMenu;  // 어빌 목록이 내가 직접 연 것인가 (버튼이 대신 열었으면 false)
+    bool MenuUi => _game.AbilityMenuOpen && _userMenu;   // 버튼 라벨·배치를 목록 모양으로 바꿀지
     bool _casting;   // 5번째 이후 어빌을 쏘려고 어빌 목록을 잠깐 여는 중 (이 동안은 버튼 라벨을 바꾸지 않는다)
     readonly ShortcutKey[] _modeTabs = new ShortcutKey[3];
     ShortcutKey _menuKey;     // ETC (기존 게임 메뉴)
@@ -289,6 +291,7 @@ internal sealed class ShortcutOverlay : UIView
         _scale = scale;
         BackgroundColor = UIColor.Clear;
         MultipleTouchEnabled = true;
+        _userMenu = _game.AbilityMenuOpen;
 
         string saved = NSUserDefaults.StandardUserDefaults.StringForKey(ModeKeyName);
         if (saved == null)   // 예전 버전(패드 보임/숨김만 있던 때)에서 넘어온 경우
@@ -301,7 +304,10 @@ internal sealed class ShortcutOverlay : UIView
         Display.Changed += () => InvokeOnMainThread(SetNeedsLayout);
         GameState.Changed += snap => InvokeOnMainThread(() =>
         {
-            bool relayout = snap.AbilityMenuOpen != _game.AbilityMenuOpen || (snap.TextEntry == null) != (_game.TextEntry == null);
+            bool wasUi = MenuUi;
+            if (!snap.AbilityMenuOpen) _userMenu = false;
+            else if (!_game.AbilityMenuOpen && !_casting) _userMenu = true;   // 내가 직접 연 어빌 목록만 목록 모양으로 보여 준다
+            bool relayout = (snap.AbilityMenuOpen && _userMenu) != wasUi || (snap.TextEntry == null) != (_game.TextEntry == null);
             _game = snap;
             UpdateShortcutLabels();
             if (snap.TextEntry != null) _textBar.Sync(snap.TextEntry, snap.TextMax);
@@ -444,7 +450,7 @@ internal sealed class ShortcutOverlay : UIView
     (string Label, string Hint, KeyKind Kind, int Vk, bool Dim) RightSlot(int slot)
     {
         var abilities = _game.Abilities;
-        if (_game.AbilityMenuOpen && !_casting)
+        if (MenuUi)
         {
             if (slot >= 8)
                 return slot == 8 ? ("▲", "", KeyKind.Faint, 38, false) : ("▼", "", KeyKind.Faint, 40, false);
@@ -549,10 +555,8 @@ internal sealed class ShortcutOverlay : UIView
             _lpFired[slot] = false;
             _lpTimer[slot]?.Invalidate();
             // 누르는 즉시 키를 보낸다 (사용 불가면 게임이 "SOUL 부족" 같은 메시지로 거절한다)
-            // 변경창은 불이 꺼진(사용 불가) 어빌에서만 2초 꾹 눌러 연다
-            bool dim = RightSlot(slot).Dim;
+            // 불이 켜져 있든 꺼져 있든 2초 꾹 누르면 변경창이 뜬다 (조준형 어빌은 직접 Esc로 취소)
             CastSlot(slot);
-            if (!dim) return;
             _lpTimer[slot] = NSTimer.CreateScheduledTimer(2.0, _ =>
             {
                 _lpTimer[slot] = null;
@@ -731,7 +735,7 @@ internal sealed class ShortcutOverlay : UIView
     const float TabletGap = 5f;
     const float TabletArrowH = 47f, TabletArrowGap = 5f;   // 방향키 버튼 높이·간격
     // 태블릿 왼쪽 여백에 놓는 오른쪽열 칸 번호 (어빌 메뉴가 열리면 1~5번 칸)
-    int[] TabletLeftSlots() => _game.AbilityMenuOpen ? new[] { 0, 1, 2, 3, 4 } : new[] { 0, 1, 2, 3, 5, 7 };
+    int[] TabletLeftSlots() => MenuUi ? new[] { 0, 1, 2, 3, 4 } : new[] { 0, 1, 2, 3, 5, 7 };
     // 태블릿 오른쪽 여백의 칸 수: 링·상태·다음 + 남은 칸 + 확인·취소. 맨 아래(취소)를 기준으로 위로 쌓는다
     // (시스템·더보기 = 8, 9번 칸은 오른쪽 맨 위에 따로 둔다)
     int TabletRightCount()
@@ -769,7 +773,7 @@ internal sealed class ShortcutOverlay : UIView
             if (row == 0) return TabletRightRow(f, TabletRightCount() - 2);            // 확인
             if (row == 1 && col == 0) return TabletRightRow(f, TabletRightCount() - 1); // 취소
             // 링(row1,col1) · 상태 · 다음. 평소엔 휴식=0, 상태=1, 다음=2, 링=3, 공격=4 순서(어빌 메뉴가 열리면 링=0)
-            if (row == 1) return TabletRightRow(f, _game.AbilityMenuOpen ? 0 : 3);
+            if (row == 1) return TabletRightRow(f, MenuUi ? 0 : 3);
             return TabletRightRow(f, 1 + col);
         }
         if (f.Wide)
@@ -779,10 +783,10 @@ internal sealed class ShortcutOverlay : UIView
             var (x0, w) = SideBox(f, false);
             float half = (w - gap) / 2f;
             int rr = row == 0 ? 4 : row - 1;
-            if (row == 2 && col == 1 && !_game.AbilityMenuOpen) rr = 0;   // 다음은 아이템 자리(맨 위 줄 오른쪽)로
-            if (row == 1 && col == 1 && !_game.AbilityMenuOpen) rr = 2;   // 링은 아이템 자리로 옮기고, 세·네 번째 줄 교환으로 휴식 옆(세 번째 줄)
+            if (row == 2 && col == 1 && !MenuUi) rr = 0;   // 다음은 아이템 자리(맨 위 줄 오른쪽)로
+            if (row == 1 && col == 1 && !MenuUi) rr = 2;   // 링은 아이템 자리로 옮기고, 세·네 번째 줄 교환으로 휴식 옆(세 번째 줄)
             float top = RowTop(f) + rr * (unit + gap);
-            int cc = (row == 1 && col == 1 && !_game.AbilityMenuOpen) ? 0 : col;   // 링은 휴식과 좌우를 맞바꿔 왼쪽 칸
+            int cc = (row == 1 && col == 1 && !MenuUi) ? 0 : col;   // 링은 휴식과 좌우를 맞바꿔 왼쪽 칸
             float x = x0 + cc * (half + gap);
             return new CGRect(x, top, span == 2 ? w : half, unit);
         }
@@ -871,7 +875,7 @@ internal sealed class ShortcutOverlay : UIView
                 float y0 = Math.Max(RowTop(f), Math.Min(f.H / 2f - block / 2f, arrowsTop - 8f - block) - (rowH + TabletGap));   // 방향키와 떨어지게 한 칸 위로
                 return new CGRect(lx, y0 + li * (rowH + TabletGap), lw, rowH);
             }
-            if (!_game.AbilityMenuOpen) return TabletRightRow(f, slot == 6 ? 0 : 4);   // 휴식=맨 위, 공격=링 다음
+            if (!MenuUi) return TabletRightRow(f, slot == 6 ? 0 : 4);   // 휴식=맨 위, 공격=링 다음
             int ri = 3;   // 어빌 메뉴가 열리면 링·상태·다음 (3칸) 다음부터
             for (int k = 0; k < slot; k++) if (Array.IndexOf(leftSlots, k) < 0) ri++;
             return TabletRightRow(f, ri);
@@ -885,11 +889,11 @@ internal sealed class ShortcutOverlay : UIView
             float half = (w - gap) / 2f;
             int r = slot >= 8 ? 0 : toLeft ? 1 + slot / 2 : slot / 2, c = slot % 2;
             if (!toLeft && (r == 2 || r == 3)) r = 5 - r;               // 공격·어빌 목록 줄과 휴식·링 줄을 서로 교환
-            if (slot == 6 && !_game.AbilityMenuOpen) c = 1;   // 휴식은 링과 좌우를 맞바꿔 오른쪽 칸
-            if (slot == 7 && !_game.AbilityMenuOpen) r = 1;   // 아이템은 다음 자리(상태 옆)로
+            if (slot == 6 && !MenuUi) c = 1;   // 휴식은 링과 좌우를 맞바꿔 오른쪽 칸
+            if (slot == 7 && !MenuUi) r = 1;   // 아이템은 다음 자리(상태 옆)로
             return new CGRect(x0 + c * (half + gap), RowTop(f) + r * (unit + gap), half, unit);
         }
-        if (_game.AbilityMenuOpen)
+        if (MenuUi)
             return slot >= 8 ? null : GridCell(f, 0, slot, 8);
         if (slot >= 6) return GridCell(f, 1, slot - 4, 6);
         return GridCell(f, 0, slot, 6);
