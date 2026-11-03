@@ -268,6 +268,7 @@ internal sealed class ShortcutOverlay : UIView
     readonly NSTimer[] _lpTimer = new NSTimer[4];
     readonly bool[] _lpFired = new bool[4];
     readonly bool[] _abilPath = new bool[4];
+    bool _casting;   // 5번째 이후 어빌을 쏘려고 어빌 목록을 잠깐 여는 중 (이 동안은 버튼 라벨을 바꾸지 않는다)
     readonly ShortcutKey[] _modeTabs = new ShortcutKey[3];
     ShortcutKey _menuKey;     // ETC (기존 게임 메뉴)
     ShortcutKey _opacityTab;  // 불투명도 탭 (◐ 아이콘)
@@ -443,7 +444,7 @@ internal sealed class ShortcutOverlay : UIView
     (string Label, string Hint, KeyKind Kind, int Vk, bool Dim) RightSlot(int slot)
     {
         var abilities = _game.Abilities;
-        if (_game.AbilityMenuOpen)
+        if (_game.AbilityMenuOpen && !_casting)
         {
             if (slot >= 8)
                 return slot == 8 ? ("▲", "", KeyKind.Faint, 38, false) : ("▼", "", KeyKind.Faint, 40, false);
@@ -547,6 +548,11 @@ internal sealed class ShortcutOverlay : UIView
         {
             _lpFired[slot] = false;
             _lpTimer[slot]?.Invalidate();
+            // 누르는 즉시 키를 보낸다 (사용 불가면 게임이 "SOUL 부족" 같은 메시지로 거절한다)
+            // 변경창은 불이 꺼진(사용 불가) 어빌에서만 2초 꾹 눌러 연다
+            bool dim = RightSlot(slot).Dim;
+            CastSlot(slot);
+            if (!dim) return;
             _lpTimer[slot] = NSTimer.CreateScheduledTimer(2.0, _ =>
             {
                 _lpTimer[slot] = null;
@@ -558,8 +564,7 @@ internal sealed class ShortcutOverlay : UIView
         }
         _lpTimer[slot]?.Invalidate();
         _lpTimer[slot] = null;
-        if (_lpFired[slot]) { _lpFired[slot] = false; return; }   // 길게 눌러 등록창을 띄웠으면 사용하지 않는다
-        CastSlot(slot);
+        _lpFired[slot] = false;   // 손을 뗄 때는 아무것도 쏘지 않는다 (이미 누를 때 사용했음)
     }
 
     static void TapKey(int vk)
@@ -575,6 +580,7 @@ internal sealed class ShortcutOverlay : UIView
         if (idx < 4) { TapKey(AbilityKeys[idx]); return; }
         // 5~8번째 어빌: Q/W/E/R 은 평소엔 휴식·공격이라 바로 누르면 안 된다. 어빌 목록(R)을 먼저 열고 그 안에서 고른다
         if (!_game.PlayerTurn) return;
+        _casting = true;
         TapKey(Vk("Ability", 82));
         PressInAbilityMenu(AbilityKeys[idx], 0);
     }
@@ -583,8 +589,14 @@ internal sealed class ShortcutOverlay : UIView
     {
         NSTimer.CreateScheduledTimer(0.05, _ =>
         {
-            if (_game.AbilityMenuOpen) { NSTimer.CreateScheduledTimer(0.08, __ => TapKey(vk)); return; }
-            if (tries < 16) PressInAbilityMenu(vk, tries + 1);   // 어빌 목록이 안 열리면 약 0.8초 뒤 포기 (엉뚱한 키를 누르지 않는다)
+            if (_game.AbilityMenuOpen)
+            {
+                NSTimer.CreateScheduledTimer(0.08, __ => TapKey(vk));
+                NSTimer.CreateScheduledTimer(0.5, __ => { _casting = false; UpdateShortcutLabels(); });
+                return;
+            }
+            if (tries < 16) { PressInAbilityMenu(vk, tries + 1); return; }
+            _casting = false; UpdateShortcutLabels();   // 어빌 목록이 안 열리면 약 0.8초 뒤 포기 (엉뚱한 키를 누르지 않는다)
         });
     }
 
