@@ -262,15 +262,6 @@ internal sealed class ShortcutOverlay : UIView
     readonly float _scale;
     readonly List<(UIView View, Func<Lay, CGRect?> Place)> _placed = new();
     readonly ShortcutKey[] _right = new ShortcutKey[10];
-    // 어빌 1~4 버튼에 사용자가 등록한 어빌리티 이름들 (칸마다 여러 개: 캐릭터마다 가진 어빌이 달라서 현재 캐릭터에 있는 것을 쓴다)
-    const string CustomAbilityKey = "abilCustom";
-    readonly List<string>[] _custom = LoadCustomAbilities();
-    readonly NSTimer[] _lpTimer = new NSTimer[4];
-    readonly bool[] _lpFired = new bool[4];
-    readonly bool[] _abilPath = new bool[4];
-    bool _userMenu;  // 어빌 목록이 내가 직접 연 것인가 (버튼이 대신 열었으면 false)
-    bool MenuUi => _game.AbilityMenuOpen && _userMenu;   // 버튼 라벨·배치를 목록 모양으로 바꿀지
-    bool _casting;   // 5번째 이후 어빌을 쏘려고 어빌 목록을 잠깐 여는 중 (이 동안은 버튼 라벨을 바꾸지 않는다)
     readonly ShortcutKey[] _modeTabs = new ShortcutKey[3];
     ShortcutKey _menuKey;     // ETC (기존 게임 메뉴)
     ShortcutKey _opacityTab;  // 불투명도 탭 (◐ 아이콘)
@@ -291,7 +282,6 @@ internal sealed class ShortcutOverlay : UIView
         _scale = scale;
         BackgroundColor = UIColor.Clear;
         MultipleTouchEnabled = true;
-        _userMenu = _game.AbilityMenuOpen;
 
         string saved = NSUserDefaults.StandardUserDefaults.StringForKey(ModeKeyName);
         if (saved == null)   // 예전 버전(패드 보임/숨김만 있던 때)에서 넘어온 경우
@@ -304,10 +294,7 @@ internal sealed class ShortcutOverlay : UIView
         Display.Changed += () => InvokeOnMainThread(SetNeedsLayout);
         GameState.Changed += snap => InvokeOnMainThread(() =>
         {
-            bool wasUi = MenuUi;
-            if (!snap.AbilityMenuOpen) _userMenu = false;
-            else if (!_game.AbilityMenuOpen && !_casting) _userMenu = true;   // 내가 직접 연 어빌 목록만 목록 모양으로 보여 준다
-            bool relayout = (snap.AbilityMenuOpen && _userMenu) != wasUi || (snap.TextEntry == null) != (_game.TextEntry == null);
+            bool relayout = snap.AbilityMenuOpen != _game.AbilityMenuOpen || (snap.TextEntry == null) != (_game.TextEntry == null);
             _game = snap;
             UpdateShortcutLabels();
             if (snap.TextEntry != null) _textBar.Sync(snap.TextEntry, snap.TextMax);
@@ -450,7 +437,7 @@ internal sealed class ShortcutOverlay : UIView
     (string Label, string Hint, KeyKind Kind, int Vk, bool Dim) RightSlot(int slot)
     {
         var abilities = _game.Abilities;
-        if (MenuUi)
+        if (_game.AbilityMenuOpen)
         {
             if (slot >= 8)
                 return slot == 8 ? ("▲", "", KeyKind.Faint, 38, false) : ("▼", "", KeyKind.Faint, 40, false);
@@ -463,12 +450,10 @@ internal sealed class ShortcutOverlay : UIView
         if (slot < 4)
         {
             string name, lv;
-            int custom = CustomIndex(slot);               // 등록한 어빌이 현재 목록의 몇 번째인지 (없으면 -1)
-            int src = custom >= 0 ? custom : slot;        // 등록이 없으면 기존처럼 목록 순서대로
-            if (src < abilities.Count) (name, lv) = SplitLevel(abilities[src].Name);
+            if (slot < abilities.Count) (name, lv) = SplitLevel(abilities[slot].Name);
             else { name = $"어빌 {slot + 1}"; lv = ""; }
-            bool dim = _game.PlayerTurn && (src >= abilities.Count || !abilities[src].Enabled);
-            return (name, Join($"{slot + 1}{(custom >= 0 ? "★" : "")}", lv), KeyKind.Ability, AbilityKeys[slot], dim);
+            bool dim = _game.PlayerTurn && (slot >= abilities.Count || !abilities[slot].Enabled);
+            return (name, Join($"{slot + 1}", lv), KeyKind.Ability, AbilityKeys[slot], dim);
         }
         return slot switch
         {
@@ -500,151 +485,9 @@ internal sealed class ShortcutOverlay : UIView
 
     void OnRight(int slot, bool down)
     {
-        if (slot < 4)
-        {
-            if (down) _abilPath[slot] = !_game.AbilityMenuOpen;   // 어빌 메뉴가 열려 있으면 예전처럼 숫자키 그대로
-            if (_abilPath[slot]) { OnAbilitySlot(slot, down); return; }
-        }
         int vk = RightSlot(slot).Vk;
         if (vk != 0) Tap(vk, down);
         else if (!down) ShowMore(_right[slot]);
-    }
-
-    // ---- 어빌 1~4 : 짧게 누르면 사용, 길게(2초) 누르면 어빌리티 등록 ----
-    static List<string>[] LoadCustomAbilities()
-    {
-        var all = new List<string>[4];
-        for (int i = 0; i < 4; i++)
-        {
-            string raw = NSUserDefaults.StandardUserDefaults.StringForKey(CustomAbilityKey + i);
-            all[i] = string.IsNullOrEmpty(raw) ? new List<string>() : new List<string>(raw.Split('\n', StringSplitOptions.RemoveEmptyEntries));
-        }
-        return all;
-    }
-
-    void SaveCustomAbilities()
-    {
-        for (int i = 0; i < 4; i++)
-            NSUserDefaults.StandardUserDefaults.SetString(string.Join("\n", _custom[i]), CustomAbilityKey + i);
-    }
-
-    // 현재 캐릭터의 어빌 목록(앞 8개)에서 이름으로 찾는다
-    int FindAbility(string baseName)
-    {
-        var abilities = _game.Abilities;
-        int n = Math.Min(abilities.Count, 8);
-        for (int i = 0; i < n; i++)
-            if (SplitLevel(abilities[i].Name).Name == baseName) return i;
-        return -1;
-    }
-
-    int CustomIndex(int slot)
-    {
-        foreach (var n in _custom[slot])
-        {
-            int i = FindAbility(n);
-            if (i >= 0) return i;
-        }
-        return -1;
-    }
-
-    void OnAbilitySlot(int slot, bool down)
-    {
-        if (down)
-        {
-            _lpFired[slot] = false;
-            _lpTimer[slot]?.Invalidate();
-            // 누르는 즉시 키를 보낸다 (사용 불가면 게임이 "SOUL 부족" 같은 메시지로 거절한다)
-            // 불이 켜져 있든 꺼져 있든 2초 꾹 누르면 변경창이 뜬다 (조준형 어빌은 직접 Esc로 취소)
-            CastSlot(slot);
-            _lpTimer[slot] = NSTimer.CreateScheduledTimer(2.0, _ =>
-            {
-                _lpTimer[slot] = null;
-                _lpFired[slot] = true;
-                PadStyle.Tap();
-                ShowAbilityPicker(slot);
-            });
-            return;
-        }
-        _lpTimer[slot]?.Invalidate();
-        _lpTimer[slot] = null;
-        _lpFired[slot] = false;   // 손을 뗄 때는 아무것도 쏘지 않는다 (이미 누를 때 사용했음)
-    }
-
-    static void TapKey(int vk)
-    {
-        Tap(vk, true);
-        NSTimer.CreateScheduledTimer(0.08, _ => Tap(vk, false));
-    }
-
-    void CastSlot(int slot)
-    {
-        int idx = CustomIndex(slot);
-        if (idx < 0) idx = slot;   // 등록이 없으면 기존처럼 목록 순서대로
-        if (idx < 4) { TapKey(AbilityKeys[idx]); return; }
-        // 5~8번째 어빌: Q/W/E/R 은 평소엔 휴식·공격이라 바로 누르면 안 된다. 어빌 목록(R)을 먼저 열고 그 안에서 고른다
-        if (!_game.PlayerTurn) return;
-        _casting = true;
-        TapKey(Vk("Ability", 82));
-        PressInAbilityMenu(AbilityKeys[idx], 0);
-    }
-
-    void PressInAbilityMenu(int vk, int tries)
-    {
-        NSTimer.CreateScheduledTimer(0.05, _ =>
-        {
-            if (_game.AbilityMenuOpen)
-            {
-                NSTimer.CreateScheduledTimer(0.08, __ => TapKey(vk));
-                NSTimer.CreateScheduledTimer(0.5, __ => { _casting = false; UpdateShortcutLabels(); });
-                return;
-            }
-            if (tries < 16) { PressInAbilityMenu(vk, tries + 1); return; }
-            _casting = false; UpdateShortcutLabels();   // 어빌 목록이 안 열리면 약 0.8초 뒤 포기 (엉뚱한 키를 누르지 않는다)
-        });
-    }
-
-    void ShowAbilityPicker(int slot)
-    {
-        var abilities = _game.Abilities;
-        int count = abilities.Count;
-        if (count == 0)
-        {
-            var alert = UIAlertController.Create($"어빌 {slot + 1} 등록", "전투 중 내 턴에서 길게 눌러 주세요. 지금은 어빌리티 목록을 읽을 수 없어요.", UIAlertControllerStyle.Alert);
-            alert.AddAction(UIAlertAction.Create("확인", UIAlertActionStyle.Cancel, null));
-            _owner.PresentViewController(alert, true, null);
-            return;
-        }
-        int cur = CustomIndex(slot);
-        var sheet = UIAlertController.Create($"어빌 {slot + 1} 에 등록할 어빌리티", null, UIAlertControllerStyle.ActionSheet);
-        for (int i = 0; i < count; i++)
-        {
-            string name = SplitLevel(abilities[i].Name).Name;
-            string title = (i == cur ? "✓ " : "") + abilities[i].Name + (i >= 8 ? "  (9번째부터는 등록 불가)" : "");
-            var act = UIAlertAction.Create(title, UIAlertActionStyle.Default, _ => RegisterAbility(slot, name));
-            act.Enabled = i < 8;
-            sheet.AddAction(act);
-        }
-        if (cur >= 0)
-            sheet.AddAction(UIAlertAction.Create("기본으로 되돌리기 (목록 순서)", UIAlertActionStyle.Destructive, _ => ClearAbility(slot)));
-        sheet.AddAction(UIAlertAction.Create("닫기", UIAlertActionStyle.Cancel, null));
-        GameMenuSheet.Present(_owner, sheet, _right[slot]);
-    }
-
-    void RegisterAbility(int slot, string name)
-    {
-        for (int s = 0; s < 4; s++) if (s != slot) _custom[s].Remove(name);   // 같은 어빌이 두 칸에 겹치지 않게
-        _custom[slot].RemoveAll(n => FindAbility(n) >= 0);                     // 이 캐릭터가 이 칸에 쓰던 등록은 교체
-        _custom[slot].Add(name);
-        SaveCustomAbilities();
-        UpdateShortcutLabels();
-    }
-
-    void ClearAbility(int slot)
-    {
-        _custom[slot].RemoveAll(n => FindAbility(n) >= 0);
-        SaveCustomAbilities();
-        UpdateShortcutLabels();
     }
 
     void ShowMore(UIView anchor)
@@ -735,7 +578,7 @@ internal sealed class ShortcutOverlay : UIView
     const float TabletGap = 5f;
     const float TabletArrowH = 47f, TabletArrowGap = 5f;   // 방향키 버튼 높이·간격
     // 태블릿 왼쪽 여백에 놓는 오른쪽열 칸 번호 (어빌 메뉴가 열리면 1~5번 칸)
-    int[] TabletLeftSlots() => MenuUi ? new[] { 0, 1, 2, 3, 4 } : new[] { 0, 1, 2, 3, 5, 7 };
+    int[] TabletLeftSlots() => _game.AbilityMenuOpen ? new[] { 0, 1, 2, 3, 4 } : new[] { 0, 1, 2, 3, 5, 7 };
     // 태블릿 오른쪽 여백의 칸 수: 링·상태·다음 + 남은 칸 + 확인·취소. 맨 아래(취소)를 기준으로 위로 쌓는다
     // (시스템·더보기 = 8, 9번 칸은 오른쪽 맨 위에 따로 둔다)
     int TabletRightCount()
@@ -773,7 +616,7 @@ internal sealed class ShortcutOverlay : UIView
             if (row == 0) return TabletRightRow(f, TabletRightCount() - 2);            // 확인
             if (row == 1 && col == 0) return TabletRightRow(f, TabletRightCount() - 1); // 취소
             // 링(row1,col1) · 상태 · 다음. 평소엔 휴식=0, 상태=1, 다음=2, 링=3, 공격=4 순서(어빌 메뉴가 열리면 링=0)
-            if (row == 1) return TabletRightRow(f, MenuUi ? 0 : 3);
+            if (row == 1) return TabletRightRow(f, _game.AbilityMenuOpen ? 0 : 3);
             return TabletRightRow(f, 1 + col);
         }
         if (f.Wide)
@@ -783,10 +626,10 @@ internal sealed class ShortcutOverlay : UIView
             var (x0, w) = SideBox(f, false);
             float half = (w - gap) / 2f;
             int rr = row == 0 ? 4 : row - 1;
-            if (row == 2 && col == 1 && !MenuUi) rr = 0;   // 다음은 아이템 자리(맨 위 줄 오른쪽)로
-            if (row == 1 && col == 1 && !MenuUi) rr = 2;   // 링은 아이템 자리로 옮기고, 세·네 번째 줄 교환으로 휴식 옆(세 번째 줄)
+            if (row == 2 && col == 1 && !_game.AbilityMenuOpen) rr = 0;   // 다음은 아이템 자리(맨 위 줄 오른쪽)로
+            if (row == 1 && col == 1 && !_game.AbilityMenuOpen) rr = 2;   // 링은 아이템 자리로 옮기고, 세·네 번째 줄 교환으로 휴식 옆(세 번째 줄)
             float top = RowTop(f) + rr * (unit + gap);
-            int cc = (row == 1 && col == 1 && !MenuUi) ? 0 : col;   // 링은 휴식과 좌우를 맞바꿔 왼쪽 칸
+            int cc = (row == 1 && col == 1 && !_game.AbilityMenuOpen) ? 0 : col;   // 링은 휴식과 좌우를 맞바꿔 왼쪽 칸
             float x = x0 + cc * (half + gap);
             return new CGRect(x, top, span == 2 ? w : half, unit);
         }
@@ -875,7 +718,7 @@ internal sealed class ShortcutOverlay : UIView
                 float y0 = Math.Max(RowTop(f), Math.Min(f.H / 2f - block / 2f, arrowsTop - 8f - block) - (rowH + TabletGap));   // 방향키와 떨어지게 한 칸 위로
                 return new CGRect(lx, y0 + li * (rowH + TabletGap), lw, rowH);
             }
-            if (!MenuUi) return TabletRightRow(f, slot == 6 ? 0 : 4);   // 휴식=맨 위, 공격=링 다음
+            if (!_game.AbilityMenuOpen) return TabletRightRow(f, slot == 6 ? 0 : 4);   // 휴식=맨 위, 공격=링 다음
             int ri = 3;   // 어빌 메뉴가 열리면 링·상태·다음 (3칸) 다음부터
             for (int k = 0; k < slot; k++) if (Array.IndexOf(leftSlots, k) < 0) ri++;
             return TabletRightRow(f, ri);
@@ -889,11 +732,11 @@ internal sealed class ShortcutOverlay : UIView
             float half = (w - gap) / 2f;
             int r = slot >= 8 ? 0 : toLeft ? 1 + slot / 2 : slot / 2, c = slot % 2;
             if (!toLeft && (r == 2 || r == 3)) r = 5 - r;               // 공격·어빌 목록 줄과 휴식·링 줄을 서로 교환
-            if (slot == 6 && !MenuUi) c = 1;   // 휴식은 링과 좌우를 맞바꿔 오른쪽 칸
-            if (slot == 7 && !MenuUi) r = 1;   // 아이템은 다음 자리(상태 옆)로
+            if (slot == 6 && !_game.AbilityMenuOpen) c = 1;   // 휴식은 링과 좌우를 맞바꿔 오른쪽 칸
+            if (slot == 7 && !_game.AbilityMenuOpen) r = 1;   // 아이템은 다음 자리(상태 옆)로
             return new CGRect(x0 + c * (half + gap), RowTop(f) + r * (unit + gap), half, unit);
         }
-        if (MenuUi)
+        if (_game.AbilityMenuOpen)
             return slot >= 8 ? null : GridCell(f, 0, slot, 8);
         if (slot >= 6) return GridCell(f, 1, slot - 4, 6);
         return GridCell(f, 0, slot, 6);
