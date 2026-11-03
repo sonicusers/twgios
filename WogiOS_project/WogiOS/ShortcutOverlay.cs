@@ -594,10 +594,10 @@ internal sealed class ShortcutOverlay : UIView
         float bottomY = f.H - Math.Max(14f, f.InsBottom + 8f) - rh;   // 취소 자리
         var (x0, w) = SideBox(f, false);
         int count = TabletRightCount();
-        // 링~휴식 칸들은 네 칸 띄운다. 맨 위 시스템·더보기(또는 ▲▼)와 겹치면 그 아래까지만 올린다
+        // 링~휴식 칸들은 세 칸 띄운다. 맨 위 시스템·더보기(또는 ▲▼)와 겹치면 그 아래까지만 올린다
         float firstY = bottomY - (count - 1) * (rh + TabletGap);
         float maxLift = Math.Max(0f, firstY - (RowTop(f) + 2f * (rh + TabletGap)));
-        float lift = i < count - 2 ? Math.Min(4f * (rh + TabletGap), maxLift) : (rh + TabletGap);   // 확인·취소는 맨 아래에서 한 칸 위
+        float lift = i < count - 2 ? Math.Min(3f * (rh + TabletGap), maxLift) : (rh + TabletGap);   // 확인·취소는 맨 아래에서 한 칸 위
         return new CGRect(x0, bottomY - (count - 1 - i) * (rh + TabletGap) - lift, w, rh);
     }
     // 태블릿 모드 버튼 높이: 오른쪽 10칸이 세로에 다 들어가도록
@@ -772,7 +772,8 @@ internal sealed class ShortcutOverlay : UIView
         // 게임은 위아래를 최소 5% 남기고 4:3 으로 들어간다 (폰·태블릿 캡처로 확인한 값)
         float topEff = Math.Max(topPt, h * 0.05f);
         float side = tablet ? Math.Max(60f, (w - (h - 2f * topEff) * 4f / 3f) / 2f)
-                  : wide ? Math.Max(60f, (w - h * 0.9f * 4f / 3f) / 2f)
+                  : wide ? (rw > 1 ? Math.Max(60f, (float)game.Left)   // 폰(가로): 지금 게임 화면(타이틀 90%·전투 100% 등) 실제 왼쪽 끝까지
+                                   : Math.Max(60f, (w - h * 0.9f * 4f / 3f) / 2f))
                   : Math.Max((float)game.Left, 140f);
         var frame = new Lay(w, h, game, wide, tablet, side, ins);
 
