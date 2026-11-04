@@ -93,6 +93,7 @@ internal static class GameRunner
         CapHook.Apply(Path.Combine(patched, "WarOfGenesis.dll"), Host.Log);
         // 오프닝(0008) 앞에 소프트맥스 로고 영상(0032)을 먼저 튼다
         OpeningHook.Apply(Path.Combine(patched, "WarOfGenesis.dll"), Host.Log);
+        OpeningHook.Diagnose(layout.SaveDir, Host.Log);
         Directory.CreateDirectory(layout.SaveDir);
         Environment.SetEnvironmentVariable("DUELDX_SAVEDIR", layout.SaveDir);
         // 앞서 고른 원본 파트2 폴더가 있으면 게임에 알려 준다 (3버튼 창을 건너뛴다)
