@@ -140,6 +140,21 @@ internal static class GameRunner
         MethodInfo main = game.GetType("DuelDx.Program", true)
             .GetMethod("Main", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
         Host.Log("starting " + game.GetName().Name);
+
+        // ---- 진단용 (임시): 영상 관련 타입/메서드 목록을 wog.log 에 남긴다 ----
+        try
+        {
+            foreach (var t in game.GetTypes()
+                .Where(t => System.Text.RegularExpressions.Regex.IsMatch(t.Name, "Cutscene|Movie|Video|Opening|Intro|Title")))
+            {
+                Host.Log("type " + t.FullName);
+                foreach (var m in t.GetMethods(BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
+                    Host.Log("   " + m.Name + "(" + string.Join(",", m.GetParameters().Select(p => p.ParameterType.Name)) + ")");
+            }
+            OpeningTrace.Start(-1);
+        }
+        catch (Exception ex) { Host.Log("diag dump failed: " + ex.Message); }
+        // ---- 진단용 끝 ----
         try
         {
             main.Invoke(null, main.GetParameters().Length == 0 ? null : new object[] { Array.Empty<string>() });
