@@ -163,7 +163,7 @@ internal static class OpeningHook
                     + " fps, " + count + "컷, 소리 " + snd + " bytes(" + rate + "Hz," + ch + "ch) -> " + (ok ? "읽을 수 있음" : "게임이 거부하는 값"));
             }
             string last = Path.Combine(saveDir, "last-part.txt");
-            log("opening diag: last-part.txt = " + (File.Exists(last) ? File.ReadAllText(last).Trim() : "(없음)") + "  (1 이면 파트1 타이틀부터 열려 오프닝을 건너뜀)");
+            log("opening diag: last-part.txt = " + (File.Exists(last) ? File.ReadAllText(last).Trim() : "(2)") + "  (1 이면 파트1 타이틀부터 열려 오프닝을 건너뜀)");
         }
         catch (Exception ex) { log("opening diag failed: " + ex.Message); }
     }
