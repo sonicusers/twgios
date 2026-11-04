@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.Buffers.Binary;
 using System.Diagnostics;
 using System.IO;
 using System.Numerics;
 using System.Runtime.InteropServices;
+using System.Threading;
 
 namespace WogiOS;
 
@@ -47,24 +49,60 @@ public static class FastBink
 
         try
         {
+            // 1) 헤더만 훑어 전체 길이를 먼저 구한다 (원본 Decode 가 마지막에 자르는 길이와 같다)
+            long total = CountSamples(data, framePos, frameCount, audioTracks);
+            long n = total - total % channels;
+            if (n <= 0) return new short[0];
+            if (n > 0x7FFFFFC7L) return null;               // 배열 한도 초과: 원본 디코더로
+
             var sw = Stopwatch.StartNew();
             var dec = new Rdct(sampleRate, channels);
-            var buf = new ShortBuf(1 << 20);
-            long total = 0;
-            for (int i = 0; i < frameCount; i++)
+            var result = new short[n];                       // 길이를 미리 확정해서 돌려준다
+            var buf = new ShortBuf(result);
+
+            // 2) 앞부분(WarmSeconds 초)만 지금 디코딩한다
+            long warmLimit = (long)sampleRate * channels * WarmSeconds;
+            int next = DecodeSome(dec, data, framePos, frameCount, audioTracks, buf, 0, warmLimit);
+
+            if (next < frameCount)
             {
-                int start = framePos[i];
-                int end = framePos[i + 1];
-                if (start + 4 > end || audioTracks < 1) continue;
-                int size = BitConverter.ToInt32(data, start);
-                if (size < 4) continue;
-                if (start + 4 + size > end) continue;
-                total += (long)(BitConverter.ToUInt32(data, start + 4) / 2);
-                dec.DecodePacket(data, start + 4, size, buf);
+                double audioSec = buf.Count / (double)((long)sampleRate * channels);
+                double elapsed = sw.Elapsed.TotalSeconds;
+                bool fastEnough = elapsed > 0 && audioSec / elapsed >= MinRealtimeRatio;
+
+                if (fastEnough)
+                {
+                    // 3) 나머지는 백그라운드에서 같은 배열에 채운다.
+                    //    게임 믹서(AudioMixer.Mix)가 Samples 를 재생 위치에서 직접 읽으므로
+                    //    디코딩이 재생보다 앞서 있으면 끊김 없이 재생된다.
+                    int resumeAt = next;
+                    Log("bink progressive: first " + buf.Count + " samples in " + sw.ElapsedMilliseconds
+                        + " ms (" + (audioSec / elapsed).ToString("F1") + "x realtime), rest in background");
+                    var th = new Thread(() =>
+                    {
+                        try
+                        {
+                            var sw2 = Stopwatch.StartNew();
+                            DecodeSome(dec, data, framePos, frameCount, audioTracks, buf, resumeAt, long.MaxValue);
+                            Log("bink background done: " + n + " samples, +" + sw2.ElapsedMilliseconds + " ms");
+                            WriteCache(cachePath, result, sampleRate, channels);
+                        }
+                        catch (Exception ex)
+                        {
+                            Log("bink background FAILED: " + ex.GetType().Name + ": " + ex.Message);
+                        }
+                    });
+                    th.IsBackground = true;
+                    th.Name = "bink-decode";
+                    th.Start();
+                    return result;
+                }
+
+                // 이 기기에서 재생보다 충분히 빠르게 못 풀면, 예전처럼 끝까지 풀고 나서 돌려준다
+                Log("bink progressive skipped (too slow: " + (elapsed > 0 ? (audioSec / elapsed).ToString("F1") : "?") + "x), decoding fully");
+                DecodeSome(dec, data, framePos, frameCount, audioTracks, buf, next, long.MaxValue);
             }
-            long n = Math.Min((long)buf.Count, total - total % channels);
-            var result = new short[n];
-            Array.Copy(buf.Arr, result, (int)n);
+
             Log("bink fast: " + n + " samples, " + sampleRate + "Hz x" + channels + ", " + sw.ElapsedMilliseconds + " ms");
             WriteCache(cachePath, result, sampleRate, channels);
             return result;
@@ -74,6 +112,47 @@ public static class FastBink
             Log("bink fast FAILED, falling back: " + ex.GetType().Name + ": " + ex.Message);
             return null;
         }
+    }
+
+    // 먼저 디코딩해서 돌려줄 길이(초). 이만큼은 재생 시작 전에 끝낸다.
+    const int WarmSeconds = 3;
+    // 앞부분 디코딩 속도가 실시간의 몇 배 이상이어야 백그라운드로 넘길지 (미달이면 끝까지 풀고 반환)
+    const double MinRealtimeRatio = 5.0;
+
+    // 원본 Decode 가 쓰는 길이 계산과 같다: 유효한 패킷 머리의 (샘플 바이트 수 / 2) 를 모두 더한다
+    static long CountSamples(byte[] data, int[] framePos, int frameCount, int audioTracks)
+    {
+        long total = 0;
+        for (int i = 0; i < frameCount; i++)
+        {
+            int start = framePos[i];
+            int end = framePos[i + 1];
+            if (start + 4 > end || audioTracks < 1) continue;
+            int size = BitConverter.ToInt32(data, start);
+            if (size < 4) continue;
+            if (start + 4 + size > end) continue;
+            total += (long)(BitConverter.ToUInt32(data, start + 4) / 2);
+        }
+        return total;
+    }
+
+    // startAt 번 패킷부터 디코딩하다가 buf.Count 가 limit 이상이 되면 멈추고, 다음에 풀 패킷 번호를 돌려준다
+    static int DecodeSome(Rdct dec, byte[] data, int[] framePos, int frameCount, int audioTracks,
+        ShortBuf buf, int startAt, long limit)
+    {
+        for (int i = startAt; i < frameCount; i++)
+        {
+            int start = framePos[i];
+            int end = framePos[i + 1];
+            if (start + 4 > end || audioTracks < 1) continue;
+            int size = BitConverter.ToInt32(data, start);
+            if (size < 4) continue;
+            if (start + 4 + size > end) continue;
+            dec.DecodePacket(data, start + 4, size, buf);
+            Thread.MemoryBarrier();                          // 다른 스레드(믹서)가 방금 쓴 샘플을 보게 한다
+            if (buf.Count >= limit) return i + 1;
+        }
+        return frameCount;
     }
 
     // ---- 디코딩 결과 캐시 -------------------------------------------------
@@ -142,7 +221,7 @@ public static class FastBink
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(path));
-            string tmp = path + ".tmp";
+            string tmp = path + "." + Environment.CurrentManagedThreadId + ".tmp";
             using (var fs = new FileStream(tmp, FileMode.Create, FileAccess.Write))
             {
                 var head = new byte[HeaderBytes];
@@ -172,9 +251,18 @@ public static class FastBink
     {
         public short[] Arr;
         public int Count;
+        readonly bool _fixed;
         public ShortBuf(int cap) { Arr = new short[cap]; }
+        // 길이가 정해진 배열에 그대로 채운다 (넘치는 샘플은 버림 = 원본이 끝을 자르는 것과 같다)
+        public ShortBuf(short[] fixedArr) { Arr = fixedArr; _fixed = true; }
         public void Add(short v)
         {
+            if (_fixed)
+            {
+                if (Count < Arr.Length) Arr[Count] = v;
+                Count++;
+                return;
+            }
             if (Count == Arr.Length) Array.Resize(ref Arr, Arr.Length * 2);
             Arr[Count++] = v;
         }
@@ -196,13 +284,23 @@ public static class FastBink
         public uint Read(int n)
         {
             if (n == 0) return 0;
-            ulong v = 0;
             int byteIdx = (int)(_pos >> 3);
             int shift = (int)(_pos & 7);
-            for (int i = 0; i < 5; i++)
+            ulong v;
+            if (byteIdx + 8 <= _len)
             {
-                int p = byteIdx + i;
-                if (p < _len) v |= (ulong)_d[_off + p] << (8 * i);
+                // 패킷 안에서 8바이트를 한 번에 읽는다 (아래 느린 경로와 같은 비트를 얻는다)
+                v = BinaryPrimitives.ReadUInt64LittleEndian(new ReadOnlySpan<byte>(_d, _off + byteIdx, 8));
+            }
+            else
+            {
+                // 패킷 끝 근처: 패킷 밖 바이트는 0 으로 취급 (원본 동작 그대로)
+                v = 0;
+                for (int i = 0; i < 5; i++)
+                {
+                    int p = byteIdx + i;
+                    if (p < _len) v |= (ulong)_d[_off + p] << (8 * i);
+                }
             }
             _pos += n;
             return (uint)((v >> shift) & ((1UL << (n & 63)) - 1UL));
