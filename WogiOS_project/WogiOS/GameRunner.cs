@@ -91,6 +91,8 @@ internal static class GameRunner
         BinkHook.Apply(Path.Combine(patched, "WarOfGenesis.Assets.dll"), Host.Log);
         // 하단 안내줄의 색 알약 아이콘을 속이 빈 모양(글자만)으로
         CapHook.Apply(Path.Combine(patched, "WarOfGenesis.dll"), Host.Log);
+        // WogShim 에 없는 RichTextBox 를 쓰는 「내 리포트」 창 때문에 시작하자마자 죽는 문제를 막는다
+        BugReportHook.Apply(Path.Combine(patched, "WarOfGenesis.dll"), Host.Log);
         Directory.CreateDirectory(layout.SaveDir);
         Environment.SetEnvironmentVariable("DUELDX_SAVEDIR", layout.SaveDir);
         // 앞서 고른 원본 파트2 폴더가 있으면 게임에 알려 준다 (3버튼 창을 건너뛴다)
