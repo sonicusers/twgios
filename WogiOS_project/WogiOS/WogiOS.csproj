@@ -32,6 +32,8 @@
     <Reference Include="WogPatcher"><HintPath>..\libs\WogPatcher.dll</HintPath></Reference>
     <!-- 패처가 읽을 원본 shim (어셈블리가 아닌 리소스로 한 벌 더 넣음) -->
     <BundleResource Include="..\libs\WogShim.dll" Link="WogShim.bin" />
+    <!-- 실행 연출용 스플래시 일러스트 -->
+    <BundleResource Include="Splash.png" />
     <!-- 앱 아이콘: 에셋 카탈로그(Assets.xcassets/AppIcon.appiconset) 를 빌드가 컴파일한다 -->
     <ImageAsset Remove="Assets.xcassets\**" />
     <ImageAsset Include="Assets.xcassets\**\*.*" />

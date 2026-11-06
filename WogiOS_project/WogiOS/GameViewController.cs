@@ -41,6 +41,7 @@ internal sealed class GameViewController : UIViewController
 {
     GameView _view;
     UILabel _status;
+    SplashOverlay _splash;
     PadOverlay _pad;
     ShortcutOverlay _keys;
     UIButton _editBtn;
@@ -69,6 +70,9 @@ internal sealed class GameViewController : UIViewController
         };
         _view.AddSubview(_status);
         BuildPad();
+        // 실행 연출: 일러스트를 맨 위에 덮어 두고, 게임 첫 화면이 뜨면 서서히 사라진다
+        _splash = SplashOverlay.Create(_view.Bounds);
+        if (_splash != null) _view.AddSubview(_splash);
         View = _view;
     }
 
@@ -86,7 +90,11 @@ internal sealed class GameViewController : UIViewController
         InvokeOnMainThread(() =>
         {
             _status.Text = text;
-            if (error) _status.TextColor = UIColor.FromRGB(255, 140, 140);
+            if (error)
+            {
+                _status.TextColor = UIColor.FromRGB(255, 140, 140);
+                _splash?.Dismiss();
+            }
         });
     }
 
@@ -208,12 +216,21 @@ internal sealed class GameViewController : UIViewController
         _view.BringSubviewToFront(_opacitySlider);
     }
 
-    public void HideStatus() => InvokeOnMainThread(() => _status.Hidden = true);
+    public void HideStatus() => InvokeOnMainThread(() =>
+    {
+        _status.Hidden = true;
+        _splash?.RequestHide();
+    });
 
     public override void ViewDidLayoutSubviews()
     {
         base.ViewDidLayoutSubviews();
         LayoutPad();
+        if (_splash?.Superview != null)
+        {
+            _splash.Frame = _view.Bounds;
+            _view.BringSubviewToFront(_splash);
+        }
         if (_game != null || _view.Bounds.Width < 1) return;
 
         var host = new IosHost(_view);
