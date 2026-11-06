@@ -56,7 +56,6 @@ internal static class PInvokeStubHook
         m.PInvokeInfo = null;
         m.IsPreserveSig = false;
         m.ImplAttributes = MethodImplAttributes.IL | MethodImplAttributes.Managed;
-        m.Attributes &= ~MethodAttributes.PinvokeImpl;
 
         m.Body = new MethodBody(m);
         ILProcessor il = m.Body.GetILProcessor();
