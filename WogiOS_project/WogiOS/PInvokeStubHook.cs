@@ -22,49 +22,60 @@ internal static class PInvokeStubHook
         ("user32.dll", "GetDpiForWindow"),
     };
 
+    static bool SameMethod(MethodReference r, MethodDefinition v)
+    {
+        if (r == null) return false;
+        if (r is MethodDefinition d) return ReferenceEquals(d, v);
+        return r.Name == v.Name && r.DeclaringType != null && r.DeclaringType.FullName == v.DeclaringType.FullName;
+    }
+
     public static void Apply(string gameDllPath, Action<string> log)
     {
+        string stage = "start";
         try
         {
             if (!File.Exists(gameDllPath)) { log("pinvoke stub hook: file missing " + gameDllPath); return; }
 
+            stage = "read";
             using var asm = AssemblyDefinition.ReadAssembly(gameDllPath, new ReaderParameters { ReadWrite = true });
             ModuleDefinition module = asm.MainModule;
 
-            var victims = module.GetTypes()
-                .SelectMany(t => t.Methods)
-                .Where(IsTarget)
-                .ToList();
-            if (victims.Count == 0)
-            {
-                // 진단: 이름이 같은 메서드가 있는데 못 잡은 것이면 상태를 적어 둔다
-                foreach (MethodDefinition m in module.GetTypes().SelectMany(t => t.Methods).Where(x => Targets.Any(t => t.Func == x.Name)))
-                    log("pinvoke stub hook: 대상 아님 " + m.FullName + " pinvoke=" + m.IsPInvokeImpl + " info=" + (m.PInvokeInfo != null)
-                        + " body=" + m.HasBody + " ins=" + (m.HasBody ? string.Join(",", m.Body.Instructions.Select(i => i.OpCode.Name)) : "-"));
-                log("pinvoke stub hook: nothing to do");
-                return;
-            }
+            stage = "find victims";
+            var victims = new System.Collections.Generic.List<MethodDefinition>();
+            foreach (TypeDefinition type in module.GetTypes())
+                foreach (MethodDefinition m in type.Methods)
+                {
+                    bool hit;
+                    try { hit = IsTarget(m); }
+                    catch (Exception ex) { log("pinvoke stub hook: IsTarget 실패 " + type.FullName + "." + m.Name + " : " + ex.GetType().Name); hit = false; }
+                    if (hit) victims.Add(m);
+                }
+            log("pinvoke stub hook: victims " + victims.Count);
+            if (victims.Count == 0) { log("pinvoke stub hook: nothing to do"); return; }
 
             // 1) 부르는 자리를 바꾼다
+            stage = "rewrite call sites";
             int sites = 0;
             foreach (TypeDefinition type in module.GetTypes())
             {
-                foreach (MethodDefinition m in type.Methods.Where(x => x.HasBody))
+                foreach (MethodDefinition m in type.Methods)
                 {
-                    var il = m.Body.GetILProcessor();
-                    foreach (Instruction ins in m.Body.Instructions.ToList())
+                    if (!m.HasBody || victims.Contains(m)) continue;
+                    var body = m.Body;
+                    var il = body.GetILProcessor();
+                    foreach (Instruction ins in body.Instructions.ToList())
                     {
                         if (ins.OpCode != OpCodes.Call && ins.OpCode != OpCodes.Callvirt) continue;
                         if (ins.Operand is not MethodReference mr) continue;
-                        MethodDefinition target = victims.FirstOrDefault(v => v.FullName == mr.FullName);
+                        MethodDefinition target = null;
+                        foreach (MethodDefinition v in victims) if (SameMethod(mr, v)) { target = v; break; }
                         if (target == null) continue;
 
-                        // 호출 자리 하나를 [pop × 인자 수, ldc 0] 으로 바꾼다 (분기 대상이 이 자리를 가리켜도 유지되도록 첫 명령을 제자리에서 바꾼다)
                         int n = target.Parameters.Count;
                         var seq = new System.Collections.Generic.List<Instruction>();
                         for (int i = 0; i < n; i++) seq.Add(il.Create(OpCodes.Pop));
-                        string rt = target.ReturnType.FullName;
-                        if (rt != "System.Void") seq.Add(ZeroOf(il, rt, out Instruction conv) ?? il.Create(OpCodes.Ldc_I4_0));
+                        string rt = target.ReturnType?.FullName ?? "System.Void";
+                        if (rt != "System.Void") seq.Add(rt == "System.Int64" || rt == "System.UInt64" ? il.Create(OpCodes.Ldc_I8, 0L) : il.Create(OpCodes.Ldc_I4_0));
                         if (seq.Count == 0) seq.Add(il.Create(OpCodes.Nop));
 
                         ins.OpCode = seq[0].OpCode; ins.Operand = seq[0].Operand;
@@ -74,25 +85,38 @@ internal static class PInvokeStubHook
                     }
                 }
             }
+            log("pinvoke stub hook: call sites " + sites);
 
-            // 2) 이제 아무도 부르지 않는 선언을 지운다 (남아 있으면 안 되는 호출이 있으면 지우지 않고 둔다)
+            // 2) 이제 아무도 부르지 않는 선언을 지운다
+            stage = "remove declarations";
             int removed = 0;
             foreach (MethodDefinition v in victims)
             {
-                bool stillUsed = module.GetTypes().SelectMany(t => t.Methods).Where(x => x.HasBody)
-                    .Any(x => x.Body.Instructions.Any(i => i.Operand is MethodReference r && r.FullName == v.FullName));
-                if (stillUsed) { log("pinvoke stub hook: still referenced, kept " + v.FullName); continue; }
+                bool stillUsed = false;
+                foreach (TypeDefinition type in module.GetTypes())
+                {
+                    foreach (MethodDefinition m in type.Methods)
+                    {
+                        if (!m.HasBody || victims.Contains(m)) continue;
+                        foreach (Instruction i in m.Body.Instructions)
+                            if (i.Operand is MethodReference r && SameMethod(r, v)) { stillUsed = true; break; }
+                        if (stillUsed) break;
+                    }
+                    if (stillUsed) break;
+                }
+                if (stillUsed) { log("pinvoke stub hook: still referenced, kept " + v.Name); continue; }
                 v.DeclaringType.Methods.Remove(v);
                 removed++;
-                log("pinvoke stub hook: " + v.DeclaringType.FullName + "." + v.Name + " 호출 자리 교체 + 선언 제거");
+                log("pinvoke stub hook: " + v.DeclaringType.FullName + "." + v.Name + " 선언 제거");
             }
 
+            stage = "write";
             asm.Write();
             log("pinvoke stub hook: applied (call sites " + sites + ", removed " + removed + ")");
         }
         catch (Exception ex)
         {
-            log("pinvoke stub hook FAILED (game stays unpatched here): " + ex);
+            log("pinvoke stub hook FAILED at stage '" + stage + "' (game stays unpatched here): " + ex.GetType().Name + ": " + ex.Message);
         }
     }
 
@@ -103,7 +127,7 @@ internal static class PInvokeStubHook
             // 예전 판(2판)이 만든 망가진 메서드: P/Invoke 표시는 남았는데 어느 DLL 인지 적힌 곳(ImplMap)만 지워진 것.
             // 이것을 부르면 앱이 아무 오류 창도 없이 꺼진다(원인). 이름만 보고 대상으로 잡는다.
             if (m.PInvokeInfo == null) return Targets.Any(t => t.Func == m.Name);
-            string dll = m.PInvokeInfo.Module.Name ?? "";
+            string dll = m.PInvokeInfo.Module?.Name ?? "";
             string func = m.PInvokeInfo.EntryPoint ?? m.Name;
             return Targets.Any(t => dll.Equals(t.Dll, StringComparison.OrdinalIgnoreCase) && func == t.Func);
         }
@@ -111,12 +135,5 @@ internal static class PInvokeStubHook
         if (!Targets.Any(t => t.Func == m.Name) || !m.HasBody) return false;
         var ins = m.Body.Instructions;
         return ins.Count is >= 1 and <= 4 && ins[ins.Count - 1].OpCode == OpCodes.Ret;
-    }
-
-    static Instruction ZeroOf(ILProcessor il, string returnType, out Instruction conv)
-    {
-        conv = null;
-        if (returnType == "System.Int64" || returnType == "System.UInt64") return il.Create(OpCodes.Ldc_I8, 0L);
-        return il.Create(OpCodes.Ldc_I4_0);   // uint / int / bool / byte 등 (IntPtr 반환은 이 대상에 없다)
     }
 }
