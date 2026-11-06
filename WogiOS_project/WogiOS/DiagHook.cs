@@ -9,7 +9,7 @@ namespace WogiOS;
 // 진단용: 게임이 오류 창 없이 꺼질 때 wog.log 에 마지막 흔적을 남긴다.
 //  - 첫 번째 예외(잡혀서 넘어가는 것 포함) 40개의 종류 · 메시지 · 호출 위치
 //  - 처리되지 않은 예외 / 작업 스레드의 예외 / 프로세스 종료(ProcessExit)
-//  - 시작 후 30초 동안 0.3초마다 메모리 · 스레드 수 (마지막 줄이 죽기 직전 상태)
+//  - 시작 후 30초 동안 0.05초마다 메모리 (마지막 줄이 죽기 직전 상태)
 // 원인을 찾은 뒤에는 GameRunner.cs 의 DiagHook.Install 한 줄만 지우면 된다.
 internal static class DiagHook
 {
@@ -45,15 +45,11 @@ internal static class DiagHook
                 var sw = Stopwatch.StartNew();
                 while (sw.Elapsed.TotalSeconds < 30)
                 {
-                    try
-                    {
-                        long managed = GC.GetTotalMemory(false) / (1024 * 1024);
-                        long ws = Environment.WorkingSet / (1024 * 1024);
-                        int threads = Process.GetCurrentProcess().Threads.Count;
-                        log("[diag] t=" + sw.ElapsedMilliseconds + "ms managed=" + managed + "MB workingSet=" + ws + "MB threads=" + threads);
-                    }
-                    catch (Exception) { }
-                    Thread.Sleep(300);
+                    string line = "[diag] t=" + sw.ElapsedMilliseconds + "ms";
+                    try { line += " managed=" + (GC.GetTotalMemory(false) / (1024 * 1024)) + "MB"; } catch (Exception) { }
+                    try { line += " workingSet=" + (Environment.WorkingSet / (1024 * 1024)) + "MB"; } catch (Exception) { }
+                    log(line);
+                    Thread.Sleep(50);
                 }
             }) { IsBackground = true, Name = "diag-heartbeat" };
             t.Start();
