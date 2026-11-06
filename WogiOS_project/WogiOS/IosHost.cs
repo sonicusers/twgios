@@ -25,7 +25,6 @@ internal sealed unsafe class IosHost : IHost
     [DllImport("libSystem.dylib")] static extern nint dlsym(nint handle, string name);
 
     delegate void BindFbDelegate(uint target, uint fb);
-    delegate void Rect4Delegate(int a, int b, int c, int d);
 
     readonly GameView _view;
     readonly ManualResetEventSlim _active = new(true);
@@ -38,34 +37,6 @@ internal sealed unsafe class IosHost : IHost
     static nint _bindThunk;
     static delegate* unmanaged<uint, uint, void> _origBind;
     static uint _defaultFbo;
-
-    // [진단] 전체화면 쏠림 조사용: glViewport / glScissor 호출값이 바뀔 때만 로그에 남긴다
-    static Rect4Delegate _vpDel, _scDel;
-    static nint _vpThunk, _scThunk;
-    static delegate* unmanaged<int, int, int, int, void> _origVp, _origSc;
-    static readonly HashSet<string> _seen = new();
-    static int _diagCount;
-
-    static void Diag(string kind, int x, int y, int w, int h)
-    {
-        string k = $"{kind} {x},{y} {w}x{h}";
-        lock (_seen) { if (_diagCount >= 200 || !_seen.Add(k)) return; _diagCount++; }
-        Host.Log("[diag] " + k);
-    }
-
-    [MonoPInvokeCallback(typeof(Rect4Delegate))]
-    static void ViewportThunk(int x, int y, int w, int h)
-    {
-        Diag("glViewport", x, y, w, h);
-        _origVp(x, y, w, h);
-    }
-
-    [MonoPInvokeCallback(typeof(Rect4Delegate))]
-    static void ScissorThunk(int x, int y, int w, int h)
-    {
-        Diag("glScissor", x, y, w, h);
-        _origSc(x, y, w, h);
-    }
 
     public IosHost(GameView view) { _view = view; }
 
@@ -119,18 +90,6 @@ internal sealed unsafe class IosHost : IHost
     {
         nint p = dlsym(_gles, name);
         if (name == "glBindFramebuffer") { _origBind = (delegate* unmanaged<uint, uint, void>)p; return _bindThunk; }
-        if (name == "glViewport")
-        {
-            _origVp = (delegate* unmanaged<int, int, int, int, void>)p;
-            _vpDel ??= ViewportThunk; _vpThunk = Marshal.GetFunctionPointerForDelegate(_vpDel);
-            return _vpThunk;
-        }
-        if (name == "glScissor")
-        {
-            _origSc = (delegate* unmanaged<int, int, int, int, void>)p;
-            _scDel ??= ScissorThunk; _scThunk = Marshal.GetFunctionPointerForDelegate(_scDel);
-            return _scThunk;
-        }
         return p;
     }
 

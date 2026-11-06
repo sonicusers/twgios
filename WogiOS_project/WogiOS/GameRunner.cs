@@ -140,6 +140,7 @@ internal static class GameRunner
         if (game == null) throw new FileNotFoundException("patched WarOfGenesis.dll missing");
         MethodInfo main = game.GetType("DuelDx.Program", true)
             .GetMethod("Main", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+        DiagHook.Install(Host.Log);   // 진단용 (원인을 찾은 뒤 이 줄을 지운다)
         Host.Log("starting " + game.GetName().Name);
         try
         {
