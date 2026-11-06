@@ -298,6 +298,9 @@ internal sealed class ShortcutOverlay : UIView
     ShortcutKey _menuKey;     // ETC (기존 게임 메뉴)
     ShortcutKey _opacityTab;  // 불투명도 탭 (◐ 아이콘)
     ShortcutKey _toggleKey;   // 새 "메뉴" 버튼: 누르면 [ETC 단축키 패드 숨김] 이 펼쳐진다
+    ShortcutKey _speedKey;    // 배속 버튼 (메뉴 바로 오른쪽): 보통 → 1.5x → 2x
+    NSTimer _speedSync;       // 게임 설정 화면에서 바꾼 배속도 버튼 글자에 반영하려고 주기적으로 읽는다
+    long _speedPressedAt;     // 방금 눌렀다면 게임이 처리할 시간을 준다 (글자가 잠깐 되돌아가는 것 방지)
     ShortcutTextBar _textBar;
     GameState.Snapshot _game = GameState.Current;
     bool _physical;
@@ -369,6 +372,19 @@ internal sealed class ShortcutOverlay : UIView
         Add(_toggleKey, f => TopSlot(f, -2));
         _toggleKey.Pressed = down => { if (!down) SetExpanded(!_expanded); };
 
+        // 배속 버튼: 게임 [설정 > 게임 > 게임 속도] 와 같은 값을 돌려 쓴다 (GameSpeed.cs)
+        _speedKey = new ShortcutKey("1x") { Round = true };
+        Add(_speedKey, f => TopSlot(f, -3));
+        _speedKey.Pressed = down =>
+        {
+            if (down) return;
+            ShowSpeed(GameSpeed.Next());   // 명령은 게임 스레드에서 처리되므로 글자는 바로 바꾸고,
+            _speedPressedAt = Environment.TickCount64;
+            NSTimer.CreateScheduledTimer(0.7, _ => SyncSpeed());   // 잠시 뒤 실제 값으로 다시 맞춘다
+        };
+        SyncSpeed();
+        _speedSync = NSTimer.CreateRepeatingScheduledTimer(0.5, _ => SyncSpeed());
+
         _menuKey = new ShortcutKey("ETC") { Round = true };
         Add(_menuKey, f => TopSlot(f, -1));
         _menuKey.Pressed = down =>
@@ -406,13 +422,23 @@ internal sealed class ShortcutOverlay : UIView
         Add(_textBar, f => _game.TextEntry == null ? null : TextBarRect(f));
     }
 
+    void ShowSpeed(int percent) =>
+        _speedKey.Set(GameSpeed.Label(percent), "", percent > 100 ? KeyKind.Accent : KeyKind.Plain);
+
+    // 게임이 실제로 쓰는 배속을 읽어 버튼에 반영 (게임이 아직 안 떴으면 0 → 보통으로 표시)
+    void SyncSpeed()
+    {
+        if (Environment.TickCount64 - _speedPressedAt < 600) return;
+        ShowSpeed(GameSpeed.Current());
+    }
+
     // 터치 UI(단축키 버튼) 불투명도. 상단 [메뉴/ETC/탭] 줄은 항상 또렷하게 둔다
     public void SetUiOpacity(float a)
     {
         foreach (var (v, _) in _placed)
         {
             if (v is not ShortcutKey k) continue;
-            bool top = ReferenceEquals(k, _toggleKey) || ReferenceEquals(k, _menuKey) || ReferenceEquals(k, _opacityTab)
+            bool top = ReferenceEquals(k, _toggleKey) || ReferenceEquals(k, _speedKey) || ReferenceEquals(k, _menuKey) || ReferenceEquals(k, _opacityTab)
                        || Array.IndexOf((Array)_modeTabs, (object)k) >= 0;
             if (!top) k.BaseAlpha = a;
         }
@@ -568,23 +594,28 @@ internal sealed class ShortcutOverlay : UIView
         return Math.Clamp(Math.Min(uR, uL), 30f, 56f);
     }
 
-    // index: -2 = 메뉴(동그라미 토글), -1 = ETC, 0..2 = 단축키/패드/숨김, 3 = 불투명도(◐)
-    // 펼친 순서: 메뉴 · ETC · 단축키 · 패드 · ◐ · 숨김
+    // index: -3 = 배속(동그라미), -2 = 메뉴(동그라미 토글), -1 = ETC, 0..2 = 단축키/패드/숨김, 3 = 불투명도(◐)
+    // 펼친 순서: 메뉴 · 배속 · ETC · 단축키 · 패드 · ◐ · 숨김   (접힌 상태: 메뉴 · 배속)
     CGRect TopSlot(Lay f, int index)
     {
-        float bar = TopBarH, gap = 6f, d = 28.8f;   // d = 메뉴 동그라미 지름 (36 의 80%)
+        float bar = TopBarH, gap = 6f, d = 28.8f;   // d = 메뉴·배속 동그라미 지름 (36 의 80%)
         bool open = _expanded && !_physical;
         float y = f.Game.Top >= bar + 6f ? ((float)f.Game.Top - bar) / 2f : 4f + f.InsTop;
-        float w = Math.Min(60f, (f.W - 16f - d - gap * 5f) / 5f);
-        if (index == -2)
+        float w = Math.Min(60f, (f.W - 16f - d * 2f - gap * 6f) / 5f);
+        float cy = Math.Max(0f, y - (d - bar) / 2f);   // 동그라미 세로 위치
+        if (_physical)
         {
-            float total = open ? d + gap + w * 5f + gap * 4f : d;
-            float x0 = (f.W - total) / 2f;
-            return new CGRect(x0, Math.Max(0f, y - (d - bar) / 2f), d, d);
+            // 컨트롤러 연결 시: 메뉴 동그라미는 없고 ETC 만 가운데, 배속은 그 오른쪽
+            if (index == -3) return new CGRect((f.W + w) / 2f + gap, cy, d, d);
+            return new CGRect((f.W - w) / 2f, y, w, bar);
         }
-        if (!open) return new CGRect((f.W - w) / 2f, y, w, bar);   // 컨트롤러 연결 시 ETC 만
-        float t = d + gap + w * 5f + gap * 4f;
-        float x = (f.W - t) / 2f + d + gap;
+        float rowW = w * 5f + gap * 4f;
+        float total = open ? d + gap + d + gap + rowW : d;   // 메뉴 · 배속 · (ETC … 숨김)
+        float x0 = (f.W - total) / 2f;   // 접힌 상태에서는 메뉴가 가운데에 그대로 있다
+        if (index == -2) return new CGRect(x0, cy, d, d);
+        if (index == -3) return new CGRect(x0 + d + gap, cy, d, d);
+        if (!open) return new CGRect((f.W - w) / 2f, y, w, bar);
+        float x = x0 + d + gap + d + gap;
         int slot = index == -1 ? 0 : index == 0 ? 1 : index == 1 ? 2 : index == 3 ? 3 : 4;
         return new CGRect(x + (w + gap) * slot, y, w, bar);
     }
@@ -816,7 +847,8 @@ internal sealed class ShortcutOverlay : UIView
             bool isText = ReferenceEquals(view, _textBar);
             CGRect? rect;
             bool isToggle = ReferenceEquals(view, _toggleKey);
-            if (isToggle) rect = _physical ? null : place(frame);                 // 컨트롤러 연결 시엔 ETC 만 남긴다
+            if (ReferenceEquals(view, _speedKey)) rect = place(frame);                // 배속은 항상 보인다 (메뉴 옆)
+            else if (isToggle) rect = _physical ? null : place(frame);                 // 컨트롤러 연결 시엔 ETC 만 남긴다
             else if (isMenu) rect = (_expanded || _physical) ? place(frame) : null;
             else if (isTab) rect = (_expanded && !_physical) ? place(frame) : null;
             else if (_physical) rect = null;
