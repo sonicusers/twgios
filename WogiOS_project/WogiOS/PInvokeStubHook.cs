@@ -87,32 +87,13 @@ internal static class PInvokeStubHook
             }
             log("pinvoke stub hook: call sites " + sites);
 
-            // 2) 이제 아무도 부르지 않는 선언을 지운다
-            stage = "remove declarations";
+            // 2) 선언은 지우지 않는다 — 부르는 자리가 모두 바뀌었으므로 아무도 부르지 않아 그대로 두어도 안전하고,
+            //    지우는 과정에서 오류가 나던(NullReferenceException) 부분을 없앤다.
             int removed = 0;
-            foreach (MethodDefinition v in victims)
-            {
-                bool stillUsed = false;
-                foreach (TypeDefinition type in module.GetTypes())
-                {
-                    foreach (MethodDefinition m in type.Methods)
-                    {
-                        if (!m.HasBody || victims.Contains(m)) continue;
-                        foreach (Instruction i in m.Body.Instructions)
-                            if (i.Operand is MethodReference r && SameMethod(r, v)) { stillUsed = true; break; }
-                        if (stillUsed) break;
-                    }
-                    if (stillUsed) break;
-                }
-                if (stillUsed) { log("pinvoke stub hook: still referenced, kept " + v.Name); continue; }
-                v.DeclaringType.Methods.Remove(v);
-                removed++;
-                log("pinvoke stub hook: " + v.DeclaringType.FullName + "." + v.Name + " 선언 제거");
-            }
 
             stage = "write";
             asm.Write();
-            log("pinvoke stub hook: applied (call sites " + sites + ", removed " + removed + ")");
+            log("pinvoke stub hook: applied (call sites " + sites + ")");
         }
         catch (Exception ex)
         {
