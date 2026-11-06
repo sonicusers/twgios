@@ -35,7 +35,15 @@ internal static class PInvokeStubHook
                 .SelectMany(t => t.Methods)
                 .Where(IsTarget)
                 .ToList();
-            if (victims.Count == 0) { log("pinvoke stub hook: nothing to do"); return; }
+            if (victims.Count == 0)
+            {
+                // 진단: 이름이 같은 메서드가 있는데 못 잡은 것이면 상태를 적어 둔다
+                foreach (MethodDefinition m in module.GetTypes().SelectMany(t => t.Methods).Where(x => Targets.Any(t => t.Func == x.Name)))
+                    log("pinvoke stub hook: 대상 아님 " + m.FullName + " pinvoke=" + m.IsPInvokeImpl + " info=" + (m.PInvokeInfo != null)
+                        + " body=" + m.HasBody + " ins=" + (m.HasBody ? string.Join(",", m.Body.Instructions.Select(i => i.OpCode.Name)) : "-"));
+                log("pinvoke stub hook: nothing to do");
+                return;
+            }
 
             // 1) 부르는 자리를 바꾼다
             int sites = 0;
@@ -99,8 +107,7 @@ internal static class PInvokeStubHook
         // 예전 판이 만든 빈 메서드
         if (!Targets.Any(t => t.Func == m.Name) || !m.HasBody) return false;
         var ins = m.Body.Instructions;
-        return ins.Count is >= 1 and <= 3 && ins[^1].OpCode == OpCodes.Ret
-               && ins.Any(i => i.OpCode == OpCodes.Ldc_I4_0 || i.OpCode == OpCodes.Ldc_I8);
+        return ins.Count is >= 1 and <= 4 && ins[ins.Count - 1].OpCode == OpCodes.Ret;
     }
 
     static Instruction ZeroOf(ILProcessor il, string returnType, out Instruction conv)
