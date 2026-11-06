@@ -43,27 +43,27 @@ internal sealed unsafe class IosHost : IHost
     static Rect4Delegate _vpDel, _scDel;
     static nint _vpThunk, _scThunk;
     static delegate* unmanaged<int, int, int, int, void> _origVp, _origSc;
-    static int _vx = int.MinValue, _vy, _vw, _vh, _sx = int.MinValue, _sy, _sw, _sh, _diagCount;
+    static readonly HashSet<string> _seen = new();
+    static int _diagCount;
+
+    static void Diag(string kind, int x, int y, int w, int h)
+    {
+        string k = $"{kind} {x},{y} {w}x{h}";
+        lock (_seen) { if (_diagCount >= 200 || !_seen.Add(k)) return; _diagCount++; }
+        Host.Log("[diag] " + k);
+    }
 
     [MonoPInvokeCallback(typeof(Rect4Delegate))]
     static void ViewportThunk(int x, int y, int w, int h)
     {
-        if ((x != _vx || y != _vy || w != _vw || h != _vh) && _diagCount < 300)
-        {
-            _vx = x; _vy = y; _vw = w; _vh = h; _diagCount++;
-            Host.Log($"[diag] glViewport {x},{y} {w}x{h}");
-        }
+        Diag("glViewport", x, y, w, h);
         _origVp(x, y, w, h);
     }
 
     [MonoPInvokeCallback(typeof(Rect4Delegate))]
     static void ScissorThunk(int x, int y, int w, int h)
     {
-        if ((x != _sx || y != _sy || w != _sw || h != _sh) && _diagCount < 300)
-        {
-            _sx = x; _sy = y; _sw = w; _sh = h; _diagCount++;
-            Host.Log($"[diag] glScissor {x},{y} {w}x{h}");
-        }
+        Diag("glScissor", x, y, w, h);
         _origSc(x, y, w, h);
     }
 
