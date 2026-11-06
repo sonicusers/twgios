@@ -66,6 +66,6 @@ internal static class GameSpeed
     public static string Label(int percent)
     {
         if (percent <= 0) percent = 100;
-        return (percent / 100.0).ToString("0.#", CultureInfo.InvariantCulture) + "x";   // 1x · 1.5x · 2x
+        return "x" + (percent / 100.0).ToString("0.#", CultureInfo.InvariantCulture);   // x1 · x1.5 · x2
     }
 }

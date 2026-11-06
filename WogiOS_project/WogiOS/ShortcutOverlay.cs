@@ -298,7 +298,7 @@ internal sealed class ShortcutOverlay : UIView
     ShortcutKey _menuKey;     // ETC (기존 게임 메뉴)
     ShortcutKey _opacityTab;  // 불투명도 탭 (◐ 아이콘)
     ShortcutKey _toggleKey;   // 새 "메뉴" 버튼: 누르면 [ETC 단축키 패드 숨김] 이 펼쳐진다
-    ShortcutKey _speedKey;    // 배속 버튼 (메뉴 바로 오른쪽): 보통 → 1.5x → 2x
+    ShortcutKey _speedKey;    // 배속 버튼 (메뉴 바로 오른쪽): 보통 → x1.5 → x2
     NSTimer _speedSync;       // 게임 설정 화면에서 바꾼 배속도 버튼 글자에 반영하려고 주기적으로 읽는다
     long _speedPressedAt;     // 방금 눌렀다면 게임이 처리할 시간을 준다 (글자가 잠깐 되돌아가는 것 방지)
     ShortcutTextBar _textBar;
@@ -373,7 +373,7 @@ internal sealed class ShortcutOverlay : UIView
         _toggleKey.Pressed = down => { if (!down) SetExpanded(!_expanded); };
 
         // 배속 버튼: 게임 [설정 > 게임 > 게임 속도] 와 같은 값을 돌려 쓴다 (GameSpeed.cs)
-        _speedKey = new ShortcutKey("1x") { Round = true };
+        _speedKey = new ShortcutKey("x1") { Round = true };
         Add(_speedKey, f => TopSlot(f, -3));
         _speedKey.Pressed = down =>
         {
@@ -422,8 +422,8 @@ internal sealed class ShortcutOverlay : UIView
         Add(_textBar, f => _game.TextEntry == null ? null : TextBarRect(f));
     }
 
-    void ShowSpeed(int percent) =>
-        _speedKey.Set(GameSpeed.Label(percent), "", percent > 100 ? KeyKind.Accent : KeyKind.Plain);
+    // 메뉴 버튼과 같은 반투명 스타일(Plain) 그대로, 글자만 바꾼다
+    void ShowSpeed(int percent) => _speedKey.Set(GameSpeed.Label(percent), "", KeyKind.Plain);
 
     // 게임이 실제로 쓰는 배속을 읽어 버튼에 반영 (게임이 아직 안 떴으면 0 → 보통으로 표시)
     void SyncSpeed()
