@@ -98,8 +98,11 @@ internal static class PInvokeStubHook
 
     static bool IsTarget(MethodDefinition m)
     {
-        if (m.IsPInvokeImpl && m.PInvokeInfo != null)
+        if (m.IsPInvokeImpl)
         {
+            // 예전 판(2판)이 만든 망가진 메서드: P/Invoke 표시는 남았는데 어느 DLL 인지 적힌 곳(ImplMap)만 지워진 것.
+            // 이것을 부르면 앱이 아무 오류 창도 없이 꺼진다(원인). 이름만 보고 대상으로 잡는다.
+            if (m.PInvokeInfo == null) return Targets.Any(t => t.Func == m.Name);
             string dll = m.PInvokeInfo.Module.Name ?? "";
             string func = m.PInvokeInfo.EntryPoint ?? m.Name;
             return Targets.Any(t => dll.Equals(t.Dll, StringComparison.OrdinalIgnoreCase) && func == t.Func);
