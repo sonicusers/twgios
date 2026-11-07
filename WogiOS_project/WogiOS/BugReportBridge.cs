@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using CoreGraphics;
@@ -45,6 +46,41 @@ public static class BugReportBridge
             Host.Log("bugreport: native dialog failed " + ex);
             return null;
         }
+    }
+
+    // ---- 기기 정보 ----
+    // 게임이 적는 os 값은 「Unix 27.2.0 x64」(커널 버전 · 항상 x64)라 기기를 알 수 없다.
+    // 패치된 Open() 이 Context() 직후에 이 메서드를 불러 「iOS 26.1 · iPhone15,2」 꼴로 바꾼다
+    // (화면의 「같이 보내는 것」과 서버로 가는 값이 모두 이 값을 쓴다). IMEI · 시리얼 같은 고유 번호는 읽지도 보내지도 않는다.
+    public static void AddDevice(Dictionary<string, object> ctx)
+    {
+        try { ctx["os"] = DeviceText(); }
+        catch (Exception ex) { Host.Log("bugreport: device info failed " + ex.Message); }
+    }
+
+    [DllImport("libSystem.dylib")]
+    static extern int sysctlbyname(string name, byte[] oldp, ref nint oldlenp, IntPtr newp, nint newlen);
+
+    static string Machine()
+    {
+        try
+        {
+            nint len = 0;
+            if (sysctlbyname("hw.machine", null, ref len, IntPtr.Zero, 0) != 0 || len <= 0) return "";
+            var buf = new byte[len];
+            if (sysctlbyname("hw.machine", buf, ref len, IntPtr.Zero, 0) != 0) return "";
+            return System.Text.Encoding.ASCII.GetString(buf, 0, (int)len).TrimEnd('\0');
+        }
+        catch (Exception) { return ""; }
+    }
+
+    static string DeviceText()
+    {
+        string model = Machine();   // 예: iPhone15,2 · iPad13,4 (시뮬레이터는 arm64 · x86_64)
+        var v = NSProcessInfo.ProcessInfo.OperatingSystemVersion;
+        string name = model.StartsWith("iPad", StringComparison.Ordinal) ? "iPadOS" : "iOS";
+        string ver = $"{name} {v.Major}.{v.Minor}" + (v.PatchVersion > 0 ? "." + v.PatchVersion : "");
+        return model.Length > 0 ? ver + " · " + model : ver;
     }
 
     internal static UIViewController TopController()

@@ -17,7 +17,7 @@ namespace WogiOS;
 // 2) DuelDx.BugReport.Open() (타이틀 「버그 리포트」 단추 · 시스템 메뉴 · F12 가 모두 여기로 온다)
 //      -> 원래의 WinForms 창 대신 앱 본체의 iOS 창(WogiOS.BugReportBridge.Ask)을 띄우고,
 //         쓴 글은 게임의 Submit() 으로 그대로 보낸다.
-//         ( var ctx = Context(); string text = BugReportBridge.Ask(Summary(ctx)); if (text != null) Submit(text, ctx); )
+//         ( var ctx = Context(); BugReportBridge.AddDevice(ctx); string text = BugReportBridge.Ask(Summary(ctx)); if (text != null) Submit(text, ctx); )
 //         게임에서 Context / Summary / Submit 을 못 찾으면(게임 판이 바뀐 경우) 예전처럼 안내 문구(토스트)만 띄운다.
 //
 // 여러 번 실행해도 안전하다(이미 바뀌어 있으면 아무것도 하지 않는다).
@@ -96,8 +96,8 @@ internal static class BugReportHook
         MethodDefinition open = br?.Methods.FirstOrDefault(m => m.Name == "Open" && !m.IsStatic && m.Parameters.Count == 0 && m.HasBody);
         if (open == null) { log("bugreport hook: BugReport.Open not found (game version changed?) - skipped"); return false; }
 
-        // 이미 iOS 창으로 바꿨으면 그대로
-        if (open.Body.Instructions.Any(i => i.Operand is MethodReference mr && mr.DeclaringType != null && mr.DeclaringType.Name == "BugReportBridge")) return false;
+        // 이미 (기기 정보까지 넣는) 최신 iOS 창으로 바꿨으면 그대로
+        if (open.Body.Instructions.Any(i => i.Operand is MethodReference mr && mr.DeclaringType != null && mr.DeclaringType.Name == "BugReportBridge" && mr.Name == "AddDevice")) return false;
 
         MethodDefinition context = br.Methods.FirstOrDefault(m => m.Name == "Context" && !m.IsStatic && m.Parameters.Count == 0 && m.HasBody);
         MethodDefinition summary = br.Methods.FirstOrDefault(m => m.Name == "Summary" && m.IsStatic && m.Parameters.Count == 1 && m.HasBody);
@@ -118,6 +118,8 @@ internal static class BugReportHook
             var bridgeType = new TypeReference("WogiOS", "BugReportBridge", module, hostRef);
             var ask = new MethodReference("Ask", ts.String, bridgeType) { HasThis = false };
             ask.Parameters.Add(new ParameterDefinition(ts.String));   // summary
+            var addDevice = new MethodReference("AddDevice", ts.Void, bridgeType) { HasThis = false };
+            addDevice.Parameters.Add(new ParameterDefinition(context.ReturnType));   // Dictionary<string, object>
 
             MethodBody body = open.Body;
             body.Instructions.Clear();
@@ -132,6 +134,7 @@ internal static class BugReportHook
             ILProcessor il = body.GetILProcessor();
             Instruction end = il.Create(OpCodes.Ret);
             il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Call, context); il.Emit(OpCodes.Stloc, ctxVar);   // ctx = Context()
+            il.Emit(OpCodes.Ldloc, ctxVar); il.Emit(OpCodes.Call, addDevice);                             // 기기 정보로 os 값 교체
             il.Emit(OpCodes.Ldloc, ctxVar); il.Emit(OpCodes.Call, summary);                               // Summary(ctx)
             il.Emit(OpCodes.Call, ask); il.Emit(OpCodes.Stloc, textVar);                                  // text = BugReportBridge.Ask(...)
             il.Emit(OpCodes.Ldloc, textVar); il.Emit(OpCodes.Brfalse, end);                               // 취소했으면 끝
