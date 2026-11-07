@@ -7,14 +7,18 @@ using Mono.Cecil.Cil;
 namespace WogiOS;
 
 // WogShim 에는 버그 리포트 창에 쓰는 WinForms 부품(RichTextBox · TableLayoutPanel · TextBox · Button …)이 없다.
-// 그대로 두면 아래 두 곳에서 TypeLoadException 으로 게임이 멈춘다. 패치된 WarOfGenesis.dll 에서 둘 다 막는다.
+// 그대로 두면 아래 두 곳에서 TypeLoadException 으로 게임이 멈춘다. 패치된 WarOfGenesis.dll 에서 둘 다 손본다.
 //
 // 1) DuelDx.MyBugReportsDialog (「내 리포트」 창, RichTextBox)
 //      ShotIfAsked() -> return false      (Program.Main 맨 앞에서 불리는 개발자용 시험 훅 — 시작하자마자 죽던 원인)
 //      Show(owner)   -> 아무것도 안 함
 //      RichTextBox 가 걸린 나머지 메서드 · 중첩 클래스 -> 제거
+//      (「내 리포트」는 iOS 판 창 BugReportBridge 가 따로 그린다)
 // 2) DuelDx.BugReport.Open() (타이틀 「버그 리포트」 단추 · 시스템 메뉴 · F12 가 모두 여기로 온다)
-//      -> 창 대신 화면에 안내 문구(토스트)만 띄운다
+//      -> 원래의 WinForms 창 대신 앱 본체의 iOS 창(WogiOS.BugReportBridge.Ask)을 띄우고,
+//         쓴 글은 게임의 Submit() 으로 그대로 보낸다.
+//         ( var ctx = Context(); string text = BugReportBridge.Ask(Summary(ctx)); if (text != null) Submit(text, ctx); )
+//         게임에서 Context / Summary / Submit 을 못 찾으면(게임 판이 바뀐 경우) 예전처럼 안내 문구(토스트)만 띄운다.
 //
 // 여러 번 실행해도 안전하다(이미 바뀌어 있으면 아무것도 하지 않는다).
 internal static class BugReportHook
@@ -92,7 +96,53 @@ internal static class BugReportHook
         MethodDefinition open = br?.Methods.FirstOrDefault(m => m.Name == "Open" && !m.IsStatic && m.Parameters.Count == 0 && m.HasBody);
         if (open == null) { log("bugreport hook: BugReport.Open not found (game version changed?) - skipped"); return false; }
 
-        // 이미 바꿨으면 그대로
+        // 이미 iOS 창으로 바꿨으면 그대로
+        if (open.Body.Instructions.Any(i => i.Operand is MethodReference mr && mr.DeclaringType != null && mr.DeclaringType.Name == "BugReportBridge")) return false;
+
+        MethodDefinition context = br.Methods.FirstOrDefault(m => m.Name == "Context" && !m.IsStatic && m.Parameters.Count == 0 && m.HasBody);
+        MethodDefinition summary = br.Methods.FirstOrDefault(m => m.Name == "Summary" && m.IsStatic && m.Parameters.Count == 1 && m.HasBody);
+        MethodDefinition submit = br.Methods.FirstOrDefault(m => m.Name == "Submit" && !m.IsStatic && m.Parameters.Count == 2
+            && m.Parameters[0].ParameterType.FullName == "System.String" && m.HasBody);
+
+        if (context != null && summary != null && submit != null)
+        {
+            // 앱 본체 어셈블리를 참조로 추가 (BinkHook 과 같은 길)
+            var self = typeof(BugReportHook).Assembly.GetName();
+            AssemblyNameReference hostRef = module.AssemblyReferences.FirstOrDefault(r => r.Name == self.Name);
+            if (hostRef == null)
+            {
+                hostRef = new AssemblyNameReference(self.Name, self.Version);
+                module.AssemblyReferences.Add(hostRef);
+            }
+            TypeSystem ts = module.TypeSystem;
+            var bridgeType = new TypeReference("WogiOS", "BugReportBridge", module, hostRef);
+            var ask = new MethodReference("Ask", ts.String, bridgeType) { HasThis = false };
+            ask.Parameters.Add(new ParameterDefinition(ts.String));   // summary
+
+            MethodBody body = open.Body;
+            body.Instructions.Clear();
+            body.ExceptionHandlers.Clear();
+            body.Variables.Clear();
+            body.InitLocals = true;
+            var ctxVar = new VariableDefinition(context.ReturnType);
+            var textVar = new VariableDefinition(ts.String);
+            body.Variables.Add(ctxVar);
+            body.Variables.Add(textVar);
+
+            ILProcessor il = body.GetILProcessor();
+            Instruction end = il.Create(OpCodes.Ret);
+            il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Call, context); il.Emit(OpCodes.Stloc, ctxVar);   // ctx = Context()
+            il.Emit(OpCodes.Ldloc, ctxVar); il.Emit(OpCodes.Call, summary);                               // Summary(ctx)
+            il.Emit(OpCodes.Call, ask); il.Emit(OpCodes.Stloc, textVar);                                  // text = BugReportBridge.Ask(...)
+            il.Emit(OpCodes.Ldloc, textVar); il.Emit(OpCodes.Brfalse, end);                               // 취소했으면 끝
+            il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldloc, textVar); il.Emit(OpCodes.Ldloc, ctxVar);
+            il.Emit(OpCodes.Call, submit);                                                                // Submit(text, ctx)
+            il.Append(end);
+            log("bugreport hook: BugReport.Open -> iOS dialog");
+            return true;
+        }
+
+        // ---- 예비: 필요한 메서드를 못 찾으면 예전처럼 안내 문구만 ----
         if (open.Body.Instructions.Any(i => i.OpCode == OpCodes.Ldstr && (i.Operand as string) == OpenNotice)) return false;
 
         // 원래 몸통이 부르던 host.Toast(string) 참조와 host 필드를 재사용한다 (몸통을 비우기 전에 먼저 찾아 둔다)
@@ -102,20 +152,21 @@ internal static class BugReportHook
         OpCode toastOp = toastCall?.OpCode ?? OpCodes.Callvirt;
         var toastRef = toastCall?.Operand as MethodReference;
 
-        MethodBody body = open.Body;
-        body.Instructions.Clear();
-        body.ExceptionHandlers.Clear();
-        body.Variables.Clear();
-        ILProcessor il = body.GetILProcessor();
+        MethodBody fallback = open.Body;
+        fallback.Instructions.Clear();
+        fallback.ExceptionHandlers.Clear();
+        fallback.Variables.Clear();
+        ILProcessor fil = fallback.GetILProcessor();
         if (hostField != null && toastRef != null)
         {
-            il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Ldfld, hostField);
-            il.Emit(OpCodes.Ldstr, OpenNotice);
-            il.Emit(toastOp, toastRef);
+            fil.Emit(OpCodes.Ldarg_0);
+            fil.Emit(OpCodes.Ldfld, hostField);
+            fil.Emit(OpCodes.Ldstr, OpenNotice);
+            fil.Emit(toastOp, toastRef);
         }
         else log("bugreport hook: host/Toast not found - Open() just returns");
-        il.Emit(OpCodes.Ret);
+        fil.Emit(OpCodes.Ret);
+        log("bugreport hook: Context/Summary/Submit not found (game version changed?) - Open() only shows a notice");
         return true;
     }
 
