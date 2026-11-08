@@ -879,7 +879,6 @@ internal sealed class ShortcutOverlay : UIView
 internal static class GameMenuSheet
 {
     const uint FullscreenCommand = 1174u;
-    const uint VersionCommand = 0xFFFF0001u;   // 게임 쪽 명령 번호와 겹치지 않는 값 (앱이 직접 처리)
 
     public static void Open(UIViewController owner, UIView anchor)
     {
@@ -890,7 +889,6 @@ internal static class GameMenuSheet
                 var list = new List<MenuEntry>
                 {
                     new MenuEntry("꽉 찬 화면 (게임 전체화면)", FullscreenCommand, null, GameState.Current.Fullscreen, true, false),
-                    new MenuEntry("게임 버전 (지금 v" + (ReleaseFetcher.InstalledVersion(GameRunner.ReleaseDirPath()) ?? "?") + ")…", VersionCommand, null, false, true, false),
                 };
                 if (tree != null && tree.Count > 0)
                 {
@@ -913,7 +911,6 @@ internal static class GameMenuSheet
             var action = UIAlertAction.Create(title, UIAlertActionStyle.Default, _ =>
             {
                 if (entry.Submenu != null) Show(owner, anchor, entry.Submenu);
-                else if (entry.Command == VersionCommand) VersionSheet.Open(owner, anchor);
                 else if (entry.Command != 0) User32.RunMenuCommand(entry.Command);
             });
             action.Enabled = entry.Enabled;
@@ -932,67 +929,5 @@ internal static class GameMenuSheet
             pop.SourceRect = anchor.Bounds;
         }
         owner.PresentViewController(sheet, true, null);
-    }
-}
-
-// 메뉴 > 게임 버전: 자동(항상 최신) 또는 이 기기에 보관된 버전 중 하나에 "머물기" (안드로이드판 VersionPicker 와 같은 동작).
-// 보관은 WogPatcher.ReleaseFetcher 가 업데이트 때 하고, GameRunner 가 바로 전 버전 하나만 남기도록 정리한다.
-internal static class VersionSheet
-{
-    public static void Open(UIViewController owner, UIView anchor)
-    {
-        string release = GameRunner.ReleaseDirPath();
-        var known = ReleaseFetcher.KnownVersions(release);
-        string running = ReleaseFetcher.InstalledVersion(release);
-        string pinned = ReleaseFetcher.PinnedVersion(release);
-
-        var sheet = UIAlertController.Create("게임 버전", null, UIAlertControllerStyle.ActionSheet);
-        sheet.AddAction(UIAlertAction.Create(
-            "자동 — 항상 개발자의 최신 버전" + (pinned == null ? "  ✓" : ""),
-            UIAlertActionStyle.Default,
-            _ => Choose(owner, release, null, running, pinned)));
-        foreach (string v in known)
-        {
-            string ver = v;
-            string label = "v" + ver + " 에 머물기"
-                + (ver == running ? " (지금 실행 중)" : "")
-                + (ver == pinned ? "  ✓" : "");
-            sheet.AddAction(UIAlertAction.Create(label, UIAlertActionStyle.Default,
-                _ => Choose(owner, release, ver, running, pinned)));
-        }
-        sheet.AddAction(UIAlertAction.Create("닫기", UIAlertActionStyle.Cancel, null));
-        GameMenuSheet.Present(owner, sheet, anchor);
-    }
-
-    // version == null 이면 자동(고정 해제)
-    static void Choose(UIViewController owner, string release, string version, string running, string pinned)
-    {
-        if (version == pinned) return;
-        ReleaseFetcher.Pin(release, version);
-
-        // 지금 실행 중인 버전에 머무는 거라면 다시 켤 필요가 없다
-        if (version != null && version == running)
-        {
-            Info(owner, "게임 버전", "v" + version + " 에 머뭅니다 — 자동 업데이트 꺼짐");
-            return;
-        }
-
-        string msg = version != null
-            ? "다음 실행부터 v" + version + " 로 실행하고, 자동 업데이트를 멈춥니다.\n\n세이브는 그대로 씁니다. 새 버전에서 만든 세이브를 예전 버전이 못 읽을 수도 있으니 주의해 주세요."
-            : "다음 실행부터 개발자의 최신 버전을 따라갑니다.";
-        // iOS 앱은 스스로 다시 켤 수 없으므로, 종료하고 직접 다시 열어 달라고 안내한다
-        var alert = UIAlertController.Create("게임 버전 바꾸기",
-            msg + "\n\n지금 앱을 종료할까요? 다시 열면 적용됩니다. (버전을 바꾸고 처음 켤 때는 준비에 시간이 걸릴 수 있습니다)",
-            UIAlertControllerStyle.Alert);
-        alert.AddAction(UIAlertAction.Create("지금 종료", UIAlertActionStyle.Default, _ => Environment.Exit(0)));
-        alert.AddAction(UIAlertAction.Create("나중에", UIAlertActionStyle.Cancel, null));
-        owner.PresentViewController(alert, true, null);
-    }
-
-    static void Info(UIViewController owner, string title, string text)
-    {
-        var a = UIAlertController.Create(title, text, UIAlertControllerStyle.Alert);
-        a.AddAction(UIAlertAction.Create("확인", UIAlertActionStyle.Default, null));
-        owner.PresentViewController(a, true, null);
     }
 }
