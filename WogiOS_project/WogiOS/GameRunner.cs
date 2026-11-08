@@ -49,9 +49,15 @@ internal static class GameRunner
             var pick = UpdateChoice.Prompt(host, layout.ReleaseDir, CheckKey());   // 새 버전이 있으면 [받기] [이전 버전 받기] [나중에]
             if (pick.kind == UpdateChoice.Kind.Skip)
                 ui.ShowStatus("v" + before + " 으로 시작합니다");
+            else if (pick.kind == UpdateChoice.Kind.Force)
+                ForceInstall(host, ui, layout, docs, null);
             else
-                FetchRelease(host, ui, layout.ReleaseDir, layout.ShimPath, docs,
-                    pick.kind == UpdateChoice.Kind.Older ? pick.tag : null);
+            {
+                string tag = pick.kind == UpdateChoice.Kind.Older ? pick.tag : null;
+                // true = 거부된 버전을 사용자가 "그래도 받기"로 골랐다
+                if (FetchRelease(host, ui, layout.ReleaseDir, layout.ShimPath, docs, tag))
+                    ForceInstall(host, ui, layout, docs, tag);
+            }
             KeepOnlyPreviousVersion(layout, before);
             DropStalePatched(layout, docs);
             ui.ShowStatus("게임을 준비하는 중… (처음에는 자료를 받느라 시간이 걸립니다)");
@@ -306,10 +312,45 @@ internal static class GameRunner
         return false;
     }
 
-    // tag != null 이면 "이전 버전 받기": 그 태그의 릴리스를 받고, 성공하면 그 버전으로 고정한다(자동 업데이트 꺼짐)
-    static void FetchRelease(IosHost host, GameViewController ui, string releaseDir, string shimPath, string files, string tag = null)
+    // "그래도 받기": ReleaseFetcher 는 지금 버전이 있으면 이 앱이 지원하지 못한다고 판정된 새 버전을 설치하지 않고,
+    // 지금 버전이 없을 때만 경고를 띄우고 설치한다. 그래서 지금 버전을 보관(versions) 폴더로 옮겨 release 를 비운 채 받는다.
+    // 받은 버전이 첫 화면 전에 멈추면 다음 실행 때 "이전 버전으로 시작할까요?"(OfferRollbackIfLastLaunchFailed)가 보관해 둔 버전으로 되돌려 준다.
+    static void ForceInstall(IosHost host, GameViewController ui, GameLayout layout, string files, string tag)
     {
-        if (tag == null && ApplyPin(ui, releaseDir)) return;   // 고정한 버전이 있으면 그 버전으로 맞추고 업데이트 확인은 건너뛴다
+        string releaseDir = layout.ReleaseDir;
+        string cur = ReleaseFetcher.InstalledVersion(releaseDir);
+        string archive = null;
+        if (cur != null && Directory.Exists(releaseDir))
+        {
+            string versions = Path.Combine(Path.GetDirectoryName(releaseDir.TrimEnd(Path.DirectorySeparatorChar)), "versions");
+            archive = Path.Combine(versions, cur);
+            Directory.CreateDirectory(versions);
+            if (Directory.Exists(archive)) Directory.Delete(archive, true);
+            Directory.Move(releaseDir, archive);
+            Host.Log("그래도 받기: v" + cur + " 을 보관으로 옮기고 새로 받습니다");
+        }
+        try { FetchRelease(host, ui, releaseDir, layout.ShimPath, files, tag, force: true); }
+        finally
+        {
+            // 받지 못해 release 가 비어 있으면 원래대로 돌려놓는다
+            if (archive != null && ReleaseFetcher.InstalledVersion(releaseDir) == null && Directory.Exists(archive))
+            {
+                try
+                {
+                    if (Directory.Exists(releaseDir)) Directory.Delete(releaseDir, true);
+                    Directory.Move(archive, releaseDir);
+                    Host.Log("그래도 받기 실패 -> v" + cur + " 으로 되돌렸습니다");
+                }
+                catch (Exception ex) { Host.Log("restore failed: " + ex.Message); }
+            }
+        }
+    }
+
+    // tag != null 이면 "이전 버전 받기": 그 태그의 릴리스를 받고, 성공하면 그 버전으로 고정한다(자동 업데이트 꺼짐)
+    // 반환값 true = 새 버전이 이 앱에서 지원되지 않는다고 거부됐고 사용자가 "그래도 받기"를 골랐다 (호출한 쪽이 ForceInstall 을 이어서 한다)
+    static bool FetchRelease(IosHost host, GameViewController ui, string releaseDir, string shimPath, string files, string tag = null, bool force = false)
+    {
+        if (tag == null && !force && ApplyPin(ui, releaseDir)) return false;   // 고정한 버전이 있으면 그 버전으로 맞추고 업데이트 확인은 건너뛴다
 
         using var http = tag == null
             ? new HttpClient { Timeout = TimeSpan.FromMinutes(5) }
@@ -328,18 +369,32 @@ internal static class GameRunner
         {
             var fetcher = new ReleaseFetcher(http, s => { ui.ShowStatus(s); Host.Log("[update] " + s); });   // 업데이트 판단 과정을 wog.log 에도 남긴다
             fetcher.UpdateAsync(releaseDir, Check, checkKey).GetAwaiter().GetResult();
-            if (fetcher.Rejected != null)
+            bool rejected = fetcher.Rejected != null;
+            if (rejected)
             {
                 string cur = ReleaseFetcher.InstalledVersion(releaseDir) ?? "?";
                 Host.Log("new release rejected:\n" + fetcher.Rejected);
-                string what = tag == null
-                    ? "개발자의 새 버전에 iOS판이 아직 지원하지 않는 부분이 있어"
-                    : "고른 버전(" + tag + ")에 iOS판이 지원하지 않는 부분이 있어";
-                host.Ask("새 버전은 앱 업데이트가 필요합니다",
-                    what + ", 지금 버전(v" + cur + ")으로 실행합니다.\n\n빠진 부분:\n" +
-                    string.Join("\n", fetcher.Rejected.Missing.Take(6)), new[] { "확인" });
+                string missing = string.Join("\n", fetcher.Rejected.Missing.Take(6));
+                if (force)
+                {
+                    // 지금 버전이 없어서 ReleaseFetcher 가 경고만 하고 설치했다
+                    host.Ask("일부 기능이 아직 지원되지 않습니다",
+                        "v" + cur + " 으로 실행합니다. 아래 부분이 아직 없어 일부 기능에서 멈출 수 있습니다. " +
+                        "문제가 생기면 다음에 켤 때 이전 버전으로 되돌릴 수 있습니다.\n\n빠진 부분:\n" + missing, new[] { "확인" });
+                }
+                else
+                {
+                    string what = tag == null
+                        ? "개발자의 새 버전에 iOS판이 아직 지원하지 않는 부분이 있어"
+                        : "고른 버전(" + tag + ")에 iOS판이 지원하지 않는 부분이 있어";
+                    int choice = host.Ask("새 버전은 앱 업데이트가 필요합니다",
+                        what + ", 지금 버전(v" + cur + ")으로 실행합니다.\n\n빠진 부분:\n" + missing +
+                        "\n\n그래도 받기: 받아서 실행해 봅니다. 일부 기능에서 멈출 수 있고, 문제가 생기면 다음에 켤 때 이전 버전으로 되돌릴 수 있습니다.",
+                        new[] { "확인", "그래도 받기" });
+                    if (choice == 1) return true;
+                }
             }
-            else if (tag != null)
+            if ((!rejected || force) && tag != null)
             {
                 // 이전 버전을 받았으니 그 버전에 머문다 (풀려면 새 버전 안내 창의 [받기])
                 string v = ReleaseFetcher.InstalledVersion(releaseDir);
@@ -350,15 +405,22 @@ internal static class GameRunner
                     ui.ShowStatus("v" + v + " 으로 고정했습니다 (자동 업데이트 꺼짐)");
                 }
             }
+            return false;
         }
         catch (Exception ex) when (ex is HttpRequestException || ex is TaskCanceledException || ex is IOException)
         {
             Host.Log("update failed (" + ex.GetType().Name + "): " + ex);   // 이유를 wog.log 에 남긴다
+            if (force)
+            {
+                ui.ShowStatus("받지 못해 이전 버전으로 시작합니다");   // ForceInstall 이 보관해 둔 버전을 되돌려 놓는다
+                return false;
+            }
             if (ReleaseFetcher.InstalledVersion(releaseDir) == null)
                 throw new IOException("게임 파일을 받지 못했습니다 — 인터넷 연결을 확인해 주세요.", ex);
             ui.ShowStatus(tag == null
                 ? "업데이트를 확인하지 못해 v" + ReleaseFetcher.InstalledVersion(releaseDir) + " 으로 시작합니다"
                 : "고른 버전(" + tag + ")을 받지 못해 v" + ReleaseFetcher.InstalledVersion(releaseDir) + " 으로 시작합니다");
+            return false;
         }
     }
 

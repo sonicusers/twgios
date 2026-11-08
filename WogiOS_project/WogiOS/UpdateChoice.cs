@@ -19,7 +19,7 @@ internal static class UpdateChoice
 {
     const string Repo = "Kyeongrok/the-war-of-genesis-clicker";
 
-    internal enum Kind { Update, Skip, Older }
+    internal enum Kind { Update, Skip, Older, Force }   // Force: 이 앱이 지원하지 못한다고 판정된 버전을 그래도 받는다
 
     // 묻지 않고 그냥 평소처럼 업데이트하게 두는 경우(Update):
     //   설치된 게 없음(첫 실행) · 최신을 못 알아냄(오프라인/504 등) · 이미 최신 · 창을 못 띄움
@@ -44,10 +44,12 @@ internal static class UpdateChoice
             if (rejected)
             {
                 choice = host.Ask("새 버전은 앱 업데이트가 필요합니다",
-                    "v" + latestRaw + " 은 이 앱이 아직 지원하지 못해, 지금 v" + cur + " 으로 실행합니다.\n\n" +
-                    "[이전 버전 받기]로 다른 버전을 골라 받을 수 있습니다. (받으면 자동 업데이트가 꺼집니다)",
-                    new[] { "확인", "이전 버전 받기" });
+                    "v" + latestRaw + " 에는 이 앱이 아직 지원하지 못하는 부분이 있어, 지금 v" + cur + " 으로 실행합니다.\n\n" +
+                    "그래도 받기: 받아서 실행해 봅니다. 일부 기능에서 멈출 수 있고, 문제가 생기면 다음에 켤 때 이전 버전으로 되돌릴 수 있습니다.\n" +
+                    "이전 버전 받기: 다른 버전을 골라 받기 (받으면 자동 업데이트가 꺼집니다)",
+                    new[] { "확인", "그래도 받기", "이전 버전 받기" });
                 if (choice < 0 || choice == 0) return (Kind.Update, null);   // 평소 흐름이 알아서 "앱 업데이트가 필요해 …" 로 넘어간다
+                if (choice == 1) return (Kind.Force, null);
             }
             else
             {
