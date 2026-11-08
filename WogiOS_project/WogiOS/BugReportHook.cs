@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using Mono.Cecil;
@@ -37,6 +38,7 @@ internal static class BugReportHook
 
             bool changed = PatchMyBugReports(module, log);
             changed |= PatchOpen(module, log);
+            changed |= PatchDialog(module, log);
 
             if (changed)
             {
@@ -171,6 +173,88 @@ internal static class BugReportHook
         fil.Emit(OpCodes.Ret);
         log("bugreport hook: Context/Summary/Submit not found (game version changed?) - Open() only shows a notice");
         return true;
+    }
+
+    // ---- 3) BugReportDialog (1.0.88 부터 WinForms 창 본체가 별도 클래스) ----------------------------
+    // Open() 을 iOS 창으로 바꾼 뒤에는 아무도 부르지 않는다. TableLayoutPanel · TextBox 등
+    // WogShim 에 없는 부품이 통째로 이 클래스 안에 있으므로 클래스째 지운다.
+    // 다른 곳에서 아직 참조하고 있으면(게임 판이 바뀐 경우) 건드리지 않는다.
+    static bool PatchDialog(ModuleDefinition module, Action<string> log)
+    {
+        TypeDefinition dlg = module.Types.FirstOrDefault(t => t.Name == "BugReportDialog");
+        if (dlg == null) return false;
+
+        foreach (TypeDefinition t in module.GetTypes())
+        {
+            if (t == dlg || t.DeclaringType == dlg) continue;
+            foreach (MethodDefinition m in t.Methods)
+            {
+                if (!m.HasBody) continue;
+                foreach (Instruction i in m.Body.Instructions)
+                {
+                    string owner = i.Operand switch
+                    {
+                        MethodReference mr => mr.DeclaringType?.FullName,
+                        FieldReference fr => fr.DeclaringType?.FullName,
+                        TypeReference tr => tr.FullName,
+                        _ => null,
+                    };
+                    if (owner != null && owner == dlg.FullName)
+                    {
+                        log("bugreport hook: BugReportDialog still referenced by " + t.FullName + "." + m.Name + " - kept");
+                        return false;
+                    }
+                }
+            }
+        }
+        module.Types.Remove(dlg);
+        log("bugreport hook: BugReportDialog removed");
+        return true;
+    }
+
+    // ---- 검사용: 훅을 적용한 뒤에도 게임 DLL 이 참조하는 "빠진 부품" 찾기 -------------------------------
+    // missing = WogPatcher 가 돌려준 빠진 항목 문자열들 (type X / member Y). 남아 있는 것만 돌려준다.
+    public static List<string> ResidualMissing(string gameDllPath, IEnumerable<string> missing)
+    {
+        var types = new HashSet<string>();
+        var members = new HashSet<string>();
+        foreach (string line in missing)
+        {
+            int k = line.IndexOf(": type ", StringComparison.Ordinal);
+            if (k >= 0) { types.Add(line.Substring(k + 7).Trim()); continue; }
+            k = line.IndexOf(": member ", StringComparison.Ordinal);
+            if (k >= 0) members.Add(line.Substring(k + 9).Trim());
+        }
+        var found = new List<string>();
+        using var asm = AssemblyDefinition.ReadAssembly(gameDllPath);
+        void Check(TypeReference tr, string where)
+        {
+            while (tr is TypeSpecification spec) tr = spec.ElementType;
+            if (tr != null && types.Contains(tr.FullName)) found.Add(where + " -> type " + tr.FullName);
+        }
+        foreach (TypeDefinition t in asm.MainModule.GetTypes())
+        {
+            foreach (FieldDefinition f in t.Fields) Check(f.FieldType, t.FullName);
+            foreach (MethodDefinition m in t.Methods)
+            {
+                string where = t.FullName + "." + m.Name;
+                Check(m.ReturnType, where);
+                foreach (ParameterDefinition p in m.Parameters) Check(p.ParameterType, where);
+                if (!m.HasBody) continue;
+                foreach (VariableDefinition v in m.Body.Variables) Check(v.VariableType, where);
+                foreach (Instruction i in m.Body.Instructions)
+                {
+                    if (i.Operand is MethodReference mr)
+                    {
+                        if (members.Contains(mr.FullName)) found.Add(where + " -> member " + mr.FullName);
+                        Check(mr.DeclaringType, where);
+                    }
+                    else if (i.Operand is FieldReference fr) Check(fr.DeclaringType, where);
+                    else if (i.Operand is TypeReference tr2) Check(tr2, where);
+                }
+            }
+        }
+        return found;
     }
 
     // ---- 도우미 -------------------------------------------------------------------------------

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
@@ -283,6 +284,49 @@ internal static class GameRunner
         return dst;
     }
 
+    // 새 버전 검사 때 "빠진 부분"으로 잡히지만 앱의 훅이 이미 처리해 주는 것을 목록에서 뺀다.
+    //  - 훅이 부르는 자리를 바꿔 주는 P/Invoke (SetThreadExecutionState · GetDpiForWindow)
+    //  - 버그 리포트 창이 쓰는 WinForms 부품 (BugReportHook 이 창 코드를 지운다)
+    // 훅을 검사용 복사본(probe)에 실제로 적용해 보고, 그래도 남는 항목만 "빠진 부분"으로 둔다.
+    // PatchReport.Missing 이 고칠 수 없는 목록이면 아무것도 바꾸지 않는다(예전처럼 거부).
+    static void FilterHandledMissing(PatchReport report, string probe)
+    {
+        var prop = report.GetType().GetProperty("Missing");
+        object val = prop != null ? prop.GetValue(report) : report.GetType().GetField("Missing")?.GetValue(report);
+        var list = val as System.Collections.IList;
+        if (list == null || list.IsReadOnly || list.IsFixedSize) { Host.Log("compat filter: Missing is not editable"); return; }
+
+        var all = new List<string>();
+        foreach (object o in list) all.Add(o?.ToString() ?? "");
+        if (all.Count == 0) return;
+
+        string dll = Path.Combine(probe, "WarOfGenesis.dll");
+        if (!File.Exists(dll))
+        {
+            string[] hit = Directory.GetFiles(probe, "WarOfGenesis.dll", SearchOption.AllDirectories);
+            if (hit.Length == 0) { Host.Log("compat filter: probe dll not found"); return; }
+            dll = hit[0];
+        }
+        BugReportHook.Apply(dll, Host.Log);
+        PInvokeStubHook.Apply(dll, Host.Log);
+
+        var winforms = all.Where(m => m.Contains(": type ") || m.Contains(": member ")).ToList();
+        var residual = new HashSet<string>(BugReportHook.ResidualMissing(dll, winforms).Select(r => r));
+        bool formsClean = residual.Count == 0;
+        if (!formsClean) foreach (string r in residual.Take(10)) Host.Log("compat filter: still referenced " + r);
+
+        int removed = 0;
+        for (int i = list.Count - 1; i >= 0; i--)
+        {
+            string m = list[i]?.ToString() ?? "";
+            bool handledPInvoke = m.StartsWith("P/Invoke without shim: ", StringComparison.Ordinal)
+                && (m.Contains("kernel32.dll!SetThreadExecutionState") || m.Contains("user32.dll!GetDpiForWindow"));
+            bool handledForms = formsClean && (m.Contains(": type ") || m.Contains(": member "));
+            if (handledPInvoke || handledForms) { list.RemoveAt(i); removed++; }
+        }
+        Host.Log("compat filter: removed " + removed + " handled entries, " + list.Count + " left");
+    }
+
     static void FetchRelease(IosHost host, GameViewController ui, string releaseDir, string shimPath, string files)
     {
         // 메뉴 > 게임 버전 에서 특정 버전에 "머물기"를 골랐으면 그 버전으로 바꿔 놓고 업데이트 확인 자체를 건너뛴다 (안드로이드판과 같은 방식).
@@ -307,7 +351,13 @@ internal static class GameRunner
 
         PatchReport Check(string staging)
         {
-            try { return GamePatcher.Patch(staging, shimPath, probe); }
+            try
+            {
+                PatchReport report = GamePatcher.Patch(staging, shimPath, probe);
+                try { FilterHandledMissing(report, probe); }
+                catch (Exception ex) { Host.Log("compat filter failed (rejecting as before): " + ex.GetType().Name + ": " + ex.Message); }
+                return report;
+            }
             finally { try { Directory.Delete(probe, true); } catch (IOException) { } }
         }
 
