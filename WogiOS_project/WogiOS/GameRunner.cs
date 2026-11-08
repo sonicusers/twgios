@@ -145,19 +145,19 @@ internal static class GameRunner
             if (failed != ReleaseFetcher.InstalledVersion(layout.ReleaseDir)) return;
             if (ReleaseFetcher.PinnedVersion(layout.ReleaseDir) != null) return;
 
-            // 이 기기에 보관된 버전 중 실패한 버전보다 낮은 것 가운데 가장 높은 버전
+            // 이 기기에 보관된 버전 중 실패한 버전보다 낮은 것 가운데 가장 높은 버전.
+            // 낮은 게 없으면(예: 낮은 버전을 받았다가 실패한 경우) 보관된 것 중 가장 높은 버전 — 보관은 바로 전에 쓰던 버전 하나뿐이다.
             Version failedV = OrderVer(failed);
-            string prev = ReleaseFetcher.KnownVersions(layout.ReleaseDir)
-                .Where(v => v != failed && OrderVer(v) < failedV)
-                .OrderByDescending(v => OrderVer(v))
-                .FirstOrDefault();
+            var others = ReleaseFetcher.KnownVersions(layout.ReleaseDir).Where(v => v != failed).ToList();
+            string prev = others.Where(v => OrderVer(v) < failedV).OrderByDescending(v => OrderVer(v)).FirstOrDefault()
+                          ?? others.OrderByDescending(v => OrderVer(v)).FirstOrDefault();
             if (prev == null) return;
 
             Host.Log("지난번 v" + failed + " 실행이 첫 화면 전에 멈춤 -> 이전 버전 v" + prev + " 제안");
             int choice = host.Ask(
                 "지난번 실행이 멈췄어요",
                 "v" + failed + " 로 시작하다가 게임 화면이 뜨기 전에 멈춘 것 같습니다.\n\n" +
-                "이전 버전 v" + prev + " 으로 시작할까요? (자동 업데이트는 꺼집니다. 새 버전 안내 창에서 [받기]를 누르면 다시 켜져요)\n\n" +
+                "이전에 쓰던 버전 v" + prev + " 으로 시작할까요? (자동 업데이트는 꺼집니다. 새 버전 안내 창에서 [받기]를 누르면 다시 켜져요)\n\n" +
                 "로딩이 길어 앱을 직접 종료했을 뿐이라면 '그대로 계속'을 누르세요.",
                 new[] { "v" + prev + " 으로 시작", "그대로 계속" });
             if (choice == 0)
@@ -387,10 +387,11 @@ internal static class GameRunner
                     string what = tag == null
                         ? "개발자의 새 버전에 iOS판이 아직 지원하지 않는 부분이 있어"
                         : "고른 버전(" + tag + ")에 iOS판이 지원하지 않는 부분이 있어";
-                    int choice = host.Ask("새 버전은 앱 업데이트가 필요합니다",
+                    string forceLabel = tag == null ? "현재 최신 버전 받기" : "그래도 받기";
+                    int choice = host.Ask("새 버전은 데이터 다운로드가 필요합니다",
                         what + ", 지금 버전(v" + cur + ")으로 실행합니다.\n\n빠진 부분:\n" + missing +
-                        "\n\n그래도 받기: 받아서 실행해 봅니다. 일부 기능에서 멈출 수 있고, 문제가 생기면 다음에 켤 때 이전 버전으로 되돌릴 수 있습니다.",
-                        new[] { "확인", "그래도 받기" });
+                        "\n\n" + forceLabel + ": 받아서 실행해 봅니다. 일부 기능에서 멈출 수 있고, 문제가 생기면 다음에 켤 때 이전 버전으로 되돌릴 수 있습니다.",
+                        new[] { "현재 버전 머무르기", forceLabel });
                     if (choice == 1) return true;
                 }
             }

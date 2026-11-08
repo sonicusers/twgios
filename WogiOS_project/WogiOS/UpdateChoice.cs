@@ -43,11 +43,11 @@ internal static class UpdateChoice
             int choice;
             if (rejected)
             {
-                choice = host.Ask("새 버전은 앱 업데이트가 필요합니다",
-                    "v" + latestRaw + " 에는 이 앱이 아직 지원하지 못하는 부분이 있어, 지금 v" + cur + " 으로 실행합니다.\n\n" +
-                    "그래도 받기: 받아서 실행해 봅니다. 일부 기능에서 멈출 수 있고, 문제가 생기면 다음에 켤 때 이전 버전으로 되돌릴 수 있습니다.\n" +
+                choice = host.Ask("새 버전은 데이터 다운로드가 필요합니다",
+                    "v" + latestRaw + " 에는 현재 앱이 지원하지 못 할 수 있는 부분이 있어, 지금 v" + cur + " 으로 실행합니다.\n\n" +
+                    "현재 최신 버전 받기: 받아서 실행해 봅니다. 일부 기능에서 멈출 수 있고, 문제가 생기면 다음에 켤 때 이전 버전으로 되돌릴 수 있습니다.\n" +
                     "이전 버전 받기: 다른 버전을 골라 받기 (받으면 자동 업데이트가 꺼집니다)",
-                    new[] { "확인", "그래도 받기", "이전 버전 받기" });
+                    new[] { "현재 버전 머무르기", "현재 최신 버전 받기", "이전 버전 받기" });
                 if (choice < 0 || choice == 0) return (Kind.Update, null);   // 평소 흐름이 알아서 "앱 업데이트가 필요해 …" 로 넘어간다
                 if (choice == 1) return (Kind.Force, null);
             }
@@ -67,7 +67,7 @@ internal static class UpdateChoice
                 if (choice == 2) return (Kind.Skip, null);
             }
 
-            string tag = PickTag(host);
+            string tag = PickTag(host, installed);
             return tag != null ? (Kind.Older, tag) : (Kind.Skip, null);   // 취소하면 이번에는 지금 버전으로 실행
         }
         catch (Exception ex)
@@ -77,9 +77,12 @@ internal static class UpdateChoice
         }
     }
 
-    static string PickTag(IosHost host)
+    const int Step = 5;    // 최신에서 몇 버전씩 건너뛰며 보여줄지
+    const int Count = 3;   // 보여줄 개수
+
+    static string PickTag(IosHost host, Version installed)
     {
-        List<(string tag, string label)> list;
+        List<(string tag, string label, Version ver)> list;
         try { list = ListReleases(); }
         catch (Exception ex)
         {
@@ -92,16 +95,41 @@ internal static class UpdateChoice
             host.Ask("받을 수 있는 버전이 없습니다", "GitHub 릴리스에서 받을 수 있는 버전을 찾지 못했습니다.", new[] { "확인" });
             return null;
         }
-        var shown = list.Take(3).ToList();   // 최신순 3개
-        string[] buttons = shown.Select(x => x.label).Append("취소").ToArray();
+        var shown = StepPick(list, Step, Count);
+        string[] buttons = shown
+            .Select(x => x.label + (installed != null && x.ver == installed ? "  (지금 실행 중)" : ""))
+            .Append("취소").ToArray();
         int i = host.Ask("받을 버전을 고르세요",
-            "받으면 그 버전으로 고정되고 자동 업데이트가 꺼집니다.\n지금 버전은 보관되어, 이 목록에서 다시 고르면 되돌릴 수 있습니다.",
+            "최신 버전에서 " + Step + "버전씩 내려간 " + Count + "개입니다.\n받으면 그 버전으로 고정되고 자동 업데이트가 꺼집니다. 지금 버전은 보관되어, 다시 고르면 되돌릴 수 있습니다.",
             buttons);
         return i >= 0 && i < shown.Count ? shown[i].tag : null;
     }
 
+    // 최신 버전(릴리스 이름에서 읽은 가장 높은 번호)에서 step 씩 내려간 번호마다, 그 번호 이하 중 가장 높은 릴리스를 하나씩 고른다.
+    // 예) 최신 1.0.92, step 5 -> 1.0.87 / 1.0.82 / 1.0.77 이하에서 가장 가까운 릴리스. 번호가 비어 있어도(중간 버전이 없어도) 가장 가까운 것을 고른다.
+    static List<(string tag, string label, Version ver)> StepPick(List<(string tag, string label, Version ver)> list, int step, int count)
+    {
+        var withVer = list.Where(x => x.ver != null).ToList();
+        if (withVer.Count == 0) return list.Take(count).ToList();   // 릴리스 이름에서 번호를 못 읽으면 예전처럼 최신순
+
+        Version top = withVer.Max(x => x.ver);
+        var res = new List<(string tag, string label, Version ver)>();
+        for (int k = 1; k <= count; k++)
+        {
+            int build = top.Build - step * k;
+            if (build < 0) break;
+            var target = new Version(top.Major, top.Minor, build);
+            var pick = withVer.Where(x => x.ver <= target && res.All(r => r.tag != x.tag))
+                              .OrderByDescending(x => x.ver).FirstOrDefault();
+            if (pick.tag != null) res.Add(pick);
+        }
+        if (res.Count == 0)   // 최신과 5 이내로 붙어 있는 릴리스뿐이면, 최신 바로 아래부터 보여준다
+            res = withVer.OrderByDescending(x => x.ver).Skip(1).Take(count).ToList();
+        return res;
+    }
+
     // GitHub 릴리스 중 releases.win.json 이 올라와 있는(= 이 앱이 받을 수 있는) 것만, 최신순
-    static List<(string tag, string label)> ListReleases()
+    static List<(string tag, string label, Version ver)> ListReleases()
     {
         using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
         http.DefaultRequestHeaders.UserAgent.ParseAdd("WogiOS/0.1");
@@ -109,7 +137,7 @@ internal static class UpdateChoice
         string json = http.GetStringAsync("https://api.github.com/repos/" + Repo + "/releases?per_page=30")
             .GetAwaiter().GetResult();
         using var doc = JsonDocument.Parse(json);
-        var res = new List<(string tag, string label)>();
+        var res = new List<(string tag, string label, Version ver)>();
         foreach (var r in doc.RootElement.EnumerateArray())
         {
             if (r.TryGetProperty("draft", out var d) && d.ValueKind == JsonValueKind.True) continue;
@@ -123,7 +151,7 @@ internal static class UpdateChoice
             string date = r.TryGetProperty("published_at", out var p) && p.ValueKind == JsonValueKind.String && p.GetString().Length >= 10
                 ? p.GetString().Substring(0, 10) : "";
             bool pre = r.TryGetProperty("prerelease", out var pr) && pr.ValueKind == JsonValueKind.True;
-            res.Add((tag, tag + (date != "" ? "  (" + date + ")" : "") + (pre ? "  시험판" : "")));
+            res.Add((tag, tag + (date != "" ? "  (" + date + ")" : "") + (pre ? "  시험판" : ""), TagVersion(tag)));
         }
         return res;
     }
@@ -155,6 +183,14 @@ internal static class UpdateChoice
             }
         }
         return bestRaw;
+    }
+
+    // 릴리스 이름(예: v1.0.92)에서 첫 번째 "숫자.숫자.숫자" 를 읽어 세 자리 버전으로 만든다. 못 읽으면 null
+    static Version TagVersion(string tag)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(tag ?? "", @"\d+\.\d+(\.\d+)?");
+        if (!m.Success || !Version.TryParse(m.Value, out var v)) return null;
+        return new Version(v.Major, v.Minor, Math.Max(v.Build, 0));
     }
 
     static Version ParseVer(string s)
