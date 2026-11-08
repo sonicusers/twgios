@@ -236,7 +236,7 @@ internal sealed class GameViewController : UIViewController
         var host = new IosHost(_view);
         AppDelegate.Host = host;
         _view.Touch = new TouchInput((float)_view.ContentScaleFactor);
-        host.FirstFrame = HideStatus;
+        host.FirstFrame = () => { GameRunner.MarkLaunchOk(); HideStatus(); };   // 첫 화면이 떴으니 "시작 중" 표시를 지운다
         _game = new Thread(() => GameRunner.Run(host, this), 64 * 1024 * 1024) { Name = "WarOfGenesis", IsBackground = true };
         _game.Start();
     }

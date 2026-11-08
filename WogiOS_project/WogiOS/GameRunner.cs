@@ -42,10 +42,13 @@ internal static class GameRunner
         try
         {
             ui.ShowStatus("게임 파일 확인 중…");
-            WipeIfNewerRelease(ui, layout);
+            OfferRollbackIfLastLaunchFailed(host, ui, layout);
+            string before = ReleaseFetcher.InstalledVersion(layout.ReleaseDir);
             FetchRelease(host, ui, layout.ReleaseDir, layout.ShimPath, docs);
+            KeepOnlyPreviousVersion(layout, before);
             DropStalePatched(layout, docs);
             ui.ShowStatus("게임을 준비하는 중… (처음에는 자료를 받느라 시간이 걸립니다)");
+            MarkLaunching(layout);
             host.StartGl();
             Host.Use(host);
             Launch(layout);
@@ -59,6 +62,95 @@ internal static class GameRunner
             ui.ShowStatus("\n오류가 났습니다. 이 화면을 캡처해 보내 주세요.\n\n" +
                 string.Join("\n", ex.ToString().Split('\n').Take(12)), error: true);
         }
+    }
+
+    // 게임 버전 메뉴(VersionSheet)가 ReleaseFetcher 의 고정/보관 버전을 조회할 때 쓴다 — Run() 의 release 폴더와 같은 곳
+    internal static string ReleaseDirPath() => Path.Combine(
+        NSFileManager.DefaultManager.GetUrls(NSSearchPathDirectory.DocumentDirectory, NSSearchPathDomain.User)[0].Path,
+        "release");
+
+    // 보관 개수는 DLL(ReleaseFetcher)에 "지금 + 이전 3개"로 박혀 있어 바꿀 수 없다.
+    // 대신 업데이트로 버전이 바뀐 직후에 바로 전에 쓰던 버전(before) 하나만 남기고 versions 폴더를 비운다.
+    // 버전이 안 바뀌었으면(이미 최신이거나 업데이트 실패) 아무것도 지우지 않는다. 고정한 버전으로 바꿔 시작한 경우에도 같은 규칙(바로 전 버전만 남김)이 적용된다.
+    static void KeepOnlyPreviousVersion(GameLayout layout, string before)
+    {
+        try
+        {
+            string now = ReleaseFetcher.InstalledVersion(layout.ReleaseDir);
+            if (before == null || now == null || now == before) return;
+            string archive = Path.Combine(
+                Path.GetDirectoryName(layout.ReleaseDir.TrimEnd(Path.DirectorySeparatorChar)), "versions");
+            if (!Directory.Exists(archive)) return;
+            foreach (string dir in Directory.GetDirectories(archive))
+            {
+                if (Path.GetFileName(dir) == before) continue;
+                Host.Log("오래된 보관 버전 삭제: " + Path.GetFileName(dir));
+                Directory.Delete(dir, true);
+            }
+        }
+        catch (Exception ex) { Host.Log("archive prune skipped: " + ex.Message); }
+    }
+
+    // ---- 시작 실패 안전장치 ----
+    // 게임을 시작하기 직전에 launch.attempt 파일(내용: 실행하려는 버전)을 만들고, 게임 첫 화면이 그려지면(FirstFrame) 지운다.
+    // 다음 실행 때 파일이 남아 있으면 지난번 실행이 화면이 뜨기 전에 멈춘 것이므로 이전 버전으로 시작할지 묻는다.
+    static string LaunchFlag() =>
+        Path.Combine(Path.GetDirectoryName(ReleaseDirPath()), "launch.attempt");
+
+    static void MarkLaunching(GameLayout layout)
+    {
+        try
+        {
+            string cur = ReleaseFetcher.InstalledVersion(layout.ReleaseDir);
+            if (cur != null) File.WriteAllText(LaunchFlag(), cur);
+        }
+        catch (Exception) { }
+    }
+
+    // 게임 첫 화면이 그려졌을 때 호출 (GameViewController 의 FirstFrame)
+    internal static void MarkLaunchOk()
+    {
+        try { File.Delete(LaunchFlag()); } catch (Exception) { }
+    }
+
+    static Version OrderVer(string s)
+    {
+        if (string.IsNullOrWhiteSpace(s)) return new Version(0, 0);
+        return Version.TryParse(s.Trim().TrimStart('v', 'V').Split('-')[0], out var v) ? v : new Version(0, 0);
+    }
+
+    static void OfferRollbackIfLastLaunchFailed(IosHost host, GameViewController ui, GameLayout layout)
+    {
+        try
+        {
+            string flag = LaunchFlag();
+            if (!File.Exists(flag)) return;
+            string failed = File.ReadAllText(flag).Trim();
+            File.Delete(flag);   // 한 번만 묻는다
+
+            // 실패한 게 지금 설치된 버전이 아니거나(그 뒤로 버전이 바뀜), 이미 버전을 고정해 둔 상태면 묻지 않는다
+            if (failed != ReleaseFetcher.InstalledVersion(layout.ReleaseDir)) return;
+            if (ReleaseFetcher.PinnedVersion(layout.ReleaseDir) != null) return;
+
+            // 이 기기에 보관된 버전 중 실패한 버전보다 낮은 것 가운데 가장 높은 버전
+            Version failedV = OrderVer(failed);
+            string prev = ReleaseFetcher.KnownVersions(layout.ReleaseDir)
+                .Where(v => v != failed && OrderVer(v) < failedV)
+                .OrderByDescending(v => OrderVer(v))
+                .FirstOrDefault();
+            if (prev == null) return;
+
+            Host.Log("지난번 v" + failed + " 실행이 첫 화면 전에 멈춤 -> 이전 버전 v" + prev + " 제안");
+            int choice = host.Ask(
+                "지난번 실행이 멈췄어요",
+                "v" + failed + " 로 시작하다가 게임 화면이 뜨기 전에 멈춘 것 같습니다.\n\n" +
+                "이전 버전 v" + prev + " 으로 시작할까요? (자동 업데이트는 꺼집니다. 나중에 메뉴 > 게임 버전 에서 \"자동\"을 골라야 다시 켜져요)\n\n" +
+                "로딩이 길어 앱을 직접 종료했을 뿐이라면 '그대로 계속'을 누르세요.",
+                new[] { "v" + prev + " 으로 시작", "그대로 계속" });
+            if (choice == 0)
+                ReleaseFetcher.Pin(layout.ReleaseDir, prev);   // 이어지는 FetchRelease 가 고정한 버전으로 바꿔 놓는다. 풀려면 메뉴 > 게임 버전 > 자동
+        }
+        catch (Exception ex) { Host.Log("rollback check skipped: " + ex.Message); }
     }
 
     // 타이틀의 EXIT 를 누르면 게임의 Main 이 끝나고 게임 스레드만 종료된다.
@@ -151,62 +243,6 @@ internal static class GameRunner
         }
     }
 
-    // 최신 버전이 설치된 버전보다 높으면, 다운로드 전에 release/patched 폴더를 먼저 지운다.
-    // 확인 실패(오프라인 등)나 버전 해석 실패 시에는 아무것도 지우지 않는다.
-    static void WipeIfNewerRelease(GameViewController ui, GameLayout layout)
-    {
-        try
-        {
-            Version installed = ParseVer(ReleaseFetcher.InstalledVersion(layout.ReleaseDir));
-            if (installed == null) return;
-            Version latest = FetchLatestVersion();
-            if (latest == null || latest <= installed) return;
-            Host.Log("새 버전 v" + latest + " 감지 (설치됨 v" + installed + ") -> release/patched 삭제 후 다운로드");
-            ui.ShowStatus("새 버전 v" + latest + " 을 받기 위해 기존 파일을 정리하는 중…");
-            foreach (string dir in new[] { layout.PatchedDir, layout.ReleaseDir })
-                if (Directory.Exists(dir)) Directory.Delete(dir, true);
-            try { File.Delete(PatchedMarker(layout)); } catch (Exception) { }
-        }
-        catch (Exception ex) { Host.Log("wipe check skipped: " + ex.Message); }
-    }
-
-    static Version FetchLatestVersion()
-    {
-        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
-        http.DefaultRequestHeaders.UserAgent.ParseAdd("WogiOS/0.1");
-        string json = http.GetStringAsync(
-            "https://github.com/Kyeongrok/the-war-of-genesis-clicker/releases/latest/download/releases.win.json")
-            .GetAwaiter().GetResult();
-        using var doc = System.Text.Json.JsonDocument.Parse(json);
-        Version best = null;
-        foreach (var root in doc.RootElement.EnumerateObject())
-        {
-            if (!root.Name.Equals("Assets", StringComparison.OrdinalIgnoreCase)) continue;
-            foreach (var asset in root.Value.EnumerateArray())
-            {
-                string ver = null, type = null;
-                foreach (var f in asset.EnumerateObject())
-                {
-                    if (f.Name.Equals("Version", StringComparison.OrdinalIgnoreCase)) ver = f.Value.GetString();
-                    else if (f.Name.Equals("Type", StringComparison.OrdinalIgnoreCase)) type = f.Value.ToString();
-                }
-                if (type != null && !type.Equals("Full", StringComparison.OrdinalIgnoreCase)) continue;
-                Version v = ParseVer(ver);
-                if (v != null && (best == null || v > best)) best = v;
-            }
-        }
-        return best;
-    }
-
-    static Version ParseVer(string s)
-    {
-        if (string.IsNullOrWhiteSpace(s)) return null;
-        s = s.Trim().TrimStart('v', 'V');
-        int cut = s.IndexOfAny(new[] { '-', '+' });
-        if (cut >= 0) s = s.Substring(0, cut);
-        return Version.TryParse(s, out var v) ? v : null;
-    }
-
     // 새 버전을 받았는데 예전 patched 폴더가 "최신"으로 취급돼 옛 버전으로 실행되는 문제 방지:
     // patched 를 만들 때 쓴 release 버전을 patched.version 에 적어 두고, 지금 release 버전과 다르면 patched 를 지운다.
     // (앱이 다운로드 직후 꺼져도 다음 실행 때 다시 검사하므로 안전)
@@ -249,6 +285,20 @@ internal static class GameRunner
 
     static void FetchRelease(IosHost host, GameViewController ui, string releaseDir, string shimPath, string files)
     {
+        // 메뉴 > 게임 버전 에서 특정 버전에 "머물기"를 골랐으면 그 버전으로 바꿔 놓고 업데이트 확인 자체를 건너뛴다 (안드로이드판과 같은 방식).
+        // 고정한 버전이 이 기기에 더는 없으면 고정을 풀고 평소처럼 업데이트한다.
+        string pinned = ReleaseFetcher.PinnedVersion(releaseDir);
+        if (pinned != null)
+        {
+            if (ReleaseFetcher.KnownVersions(releaseDir).Contains(pinned))
+            {
+                ReleaseFetcher.Activate(releaseDir, pinned);
+                ui.ShowStatus("고정한 버전 v" + pinned + " 으로 시작합니다 (자동 업데이트 꺼짐)");
+                return;
+            }
+            ReleaseFetcher.Pin(releaseDir, null);
+        }
+
         using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
         http.DefaultRequestHeaders.UserAgent.ParseAdd("WogiOS/0.1");
         string probe = Path.Combine(files, "patch-probe");
