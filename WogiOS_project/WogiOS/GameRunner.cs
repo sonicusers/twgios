@@ -313,7 +313,7 @@ internal static class GameRunner
 
         try
         {
-            var fetcher = new ReleaseFetcher(http, s => ui.ShowStatus(s));
+            var fetcher = new ReleaseFetcher(http, s => { ui.ShowStatus(s); Host.Log("[update] " + s); });   // 업데이트 판단 과정을 wog.log 에도 남긴다
             fetcher.UpdateAsync(releaseDir, Check, checkKey).GetAwaiter().GetResult();
             if (fetcher.Rejected != null)
             {
