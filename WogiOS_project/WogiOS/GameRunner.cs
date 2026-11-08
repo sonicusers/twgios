@@ -380,7 +380,7 @@ internal static class GameRunner
                     // 지금 버전이 없어서 ReleaseFetcher 가 경고만 하고 설치했다
                     host.Ask("일부 기능이 아직 지원되지 않습니다",
                         "v" + cur + " 으로 실행합니다. 아래 부분이 아직 없어 일부 기능에서 멈출 수 있습니다. " +
-                        "문제가 생기면 다음에 켤 때 이전 버전으로 되돌릴 수 있습니다.\n\n빠진 부분:\n" + missing, new[] { "확인" });
+                        "문제가 생기면 다음에 켤 때 이전 버전으로 되돌릴 수 있습니다.\n\n빠진 부분(PC 버전 파일이라 iOS판과 관련이 없습니다.)\n" + missing, new[] { "확인" });
                 }
                 else
                 {
@@ -389,7 +389,7 @@ internal static class GameRunner
                         : "고른 버전(" + tag + ")에 iOS판이 지원하지 않는 부분이 있어";
                     string forceLabel = tag == null ? "현재 최신 버전 받기" : "그래도 받기";
                     int choice = host.Ask("새 버전은 데이터 다운로드가 필요합니다",
-                        what + ", 지금 버전(v" + cur + ")으로 실행합니다.\n\n빠진 부분:\n" + missing +
+                        what + ", 지금 버전(v" + cur + ")으로 실행합니다.\n\n빠진 부분(PC 버전 파일이라 iOS판과 관련이 없습니다.)\n" + missing +
                         "\n\n" + forceLabel + ": 받아서 실행해 봅니다. 일부 기능에서 멈출 수 있고, 문제가 생기면 다음에 켤 때 이전 버전으로 되돌릴 수 있습니다.",
                         new[] { "현재 버전 머무르기", forceLabel });
                     if (choice == 1) return true;
