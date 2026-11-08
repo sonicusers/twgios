@@ -326,6 +326,7 @@ internal static class GameRunner
         }
         catch (Exception ex) when (ex is HttpRequestException || ex is TaskCanceledException || ex is IOException)
         {
+            Host.Log("update failed (" + ex.GetType().Name + "): " + ex);   // 이유를 wog.log 에 남긴다
             if (ReleaseFetcher.InstalledVersion(releaseDir) == null)
                 throw new IOException("게임 파일을 받지 못했습니다 — 인터넷 연결을 확인해 주세요.", ex);
             ui.ShowStatus("업데이트를 확인하지 못해 v" + ReleaseFetcher.InstalledVersion(releaseDir) + " 으로 시작합니다");
