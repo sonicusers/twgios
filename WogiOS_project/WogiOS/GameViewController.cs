@@ -235,6 +235,9 @@ internal sealed class GameViewController : UIViewController
 
         var host = new IosHost(_view);
         AppDelegate.Host = host;
+        // LiveContainer 등에서는 AppDelegate 의 백그라운드 콜백이 안 올 수 있어서 알림으로도 직접 받는다
+        NSNotificationCenter.DefaultCenter.AddObserver(UIApplication.DidEnterBackgroundNotification, _ => host.SetActive(false));
+        NSNotificationCenter.DefaultCenter.AddObserver(UIApplication.WillEnterForegroundNotification, _ => host.SetActive(true));
         _view.Touch = new TouchInput((float)_view.ContentScaleFactor);
         host.FirstFrame = () => { GameRunner.MarkLaunchOk(); HideStatus(); };   // 첫 화면이 떴으니 "시작 중" 표시를 지운다
         _game = new Thread(() => GameRunner.Run(host, this), 64 * 1024 * 1024) { Name = "WarOfGenesis", IsBackground = true };

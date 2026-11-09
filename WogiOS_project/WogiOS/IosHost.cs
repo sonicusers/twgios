@@ -46,7 +46,11 @@ internal sealed unsafe class IosHost : IHost
     public bool ListDrives => false;
     public (int W, int H) SurfaceSize => (_w, _h);
 
-    public void SetActive(bool on) { if (on) _active.Set(); else _active.Reset(); }
+    public void SetActive(bool on)
+    {
+        if (on) _active.Set(); else _active.Reset();
+        AudioOut.SetPaused(!on);   // 백그라운드에서는 소리도 끈다
+    }
 
     // iOS 에는 기본 프레임버퍼(0)가 없으므로 glBindFramebuffer(…, 0) 을 우리 FBO 로 바꿔치기한다
     [MonoPInvokeCallback(typeof(BindFbDelegate))]

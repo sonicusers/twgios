@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Threading;
@@ -17,6 +18,37 @@ internal sealed unsafe class AudioOut : IAudioSink
     long _scheduled, _played;
     int _gen, _writes;
     volatile bool _disposed;
+    readonly ManualResetEventSlim _run = new(true);   // 백그라운드에서는 Reset → Write 가 멈춘다
+    readonly object _startLock = new();
+
+    // ── 앱이 백그라운드로 가면 모든 오디오 출력을 멈추고, 돌아오면 이어서 재생 ──
+    static readonly List<AudioOut> Live = new();
+    static volatile bool _globalPaused;
+
+    public static void SetPaused(bool paused)
+    {
+        if (_globalPaused == paused) return;   // 같은 알림이 여러 경로로 와도 한 번만 처리
+        _globalPaused = paused;
+        AudioOut[] snap;
+        lock (Live) snap = Live.ToArray();
+
+        if (!paused) { try { AVAudioSession.SharedInstance().SetActive(true, out _); } catch { } }
+        foreach (var a in snap) { if (paused) a.Pause(); else a.Resume(); }
+        if (paused) { try { AVAudioSession.SharedInstance().SetActive(false, out _); } catch { } }
+    }
+
+    void Pause()
+    {
+        _run.Reset();
+        try { _node.Pause(); _engine.Pause(); Log("paused (background)"); } catch (Exception e) { Log("pause failed: " + e.Message); }
+    }
+
+    void Resume()
+    {
+        if (_disposed) return;
+        _run.Set();
+        try { Start(); Log("resumed (foreground)"); } catch (Exception e) { Log("resume failed: " + e.Message); }
+    }
 
     static void Log(string s)
     {
@@ -36,22 +68,28 @@ internal sealed unsafe class AudioOut : IAudioSink
         _fmt = new AVAudioFormat(AVAudioCommonFormat.PCMFloat32, rate, (uint)ch, false);
         _engine.AttachNode(_node);
         _engine.Connect(_node, _engine.MainMixerNode, _fmt);
+        lock (Live) Live.Add(this);
+        if (_globalPaused) { _run.Reset(); return; }   // 백그라운드 중에 열린 경우: 돌아올 때까지 시작 안 함
         Start();
     }
 
     void Start()
     {
-        AVAudioSession.SharedInstance().SetActive(true, out _);
-        _engine.Prepare();
-        bool ok = _engine.StartAndReturnError(out NSError err);
-        Log(ok ? "engine started" : "engine start FAILED: " + err?.LocalizedDescription);
-        _node.Play();
+        lock (_startLock)
+        {
+            AVAudioSession.SharedInstance().SetActive(true, out _);
+            _engine.Prepare();
+            bool ok = _engine.StartAndReturnError(out NSError err);
+            Log(ok ? "engine started" : "engine start FAILED: " + err?.LocalizedDescription);
+            _node.Play();
+        }
     }
 
     public long PlayedFrames => Interlocked.Read(ref _played);
 
     public void Write(ReadOnlySpan<byte> pcm)
     {
+        while (!_disposed && !_run.Wait(100)) { }   // 백그라운드면 여기서 대기
         if (_disposed) return;
         int frames = pcm.Length / _frameBytes;
         if (frames == 0) return;
@@ -94,12 +132,15 @@ internal sealed unsafe class AudioOut : IAudioSink
         _node.Stop();
         Interlocked.Increment(ref _gen);
         Interlocked.Exchange(ref _played, Interlocked.Read(ref _scheduled));
+        if (!_run.IsSet) return;   // 백그라운드 중에는 재생 재개하지 않음
         if (!_engine.Running) Start(); else _node.Play();
     }
 
     public void Dispose()
     {
         _disposed = true;
+        _run.Set();
+        lock (Live) Live.Remove(this);
         _node.Stop();
         _engine.Stop();
     }
