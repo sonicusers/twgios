@@ -46,7 +46,7 @@ internal static class UpdateChoice
                 choice = host.Ask("새 버전은 데이터 다운로드가 필요합니다",
                     "v" + latestRaw + " 에는 현재 앱이 지원하지 못 할 수 있는 부분이 있어, 지금 v" + cur + " 으로 실행합니다.\n\n" +
                     "현재 최신 버전 받기: 받아서 실행해 봅니다. 일부 기능에서 멈출 수 있고, 문제가 생기면 다음에 켤 때 이전 버전으로 되돌릴 수 있습니다.\n" +
-                    "이전 버전 받기: 다른 버전을 골라 받기 (받으면 자동 업데이트가 꺼집니다)",
+                    "이전 버전 받기: 다른 버전을 골라 받기 (받으면 선택하신 버전으로 고정됩니다)",
                     new[] { "현재 버전 머무르기", "현재 최신 버전 받기", "이전 버전 받기" });
                 if (choice < 0 || choice == 0) return (Kind.Update, null);   // 평소 흐름이 알아서 "앱 업데이트가 필요해 …" 로 넘어간다
                 if (choice == 1) return (Kind.Force, null);
@@ -56,7 +56,7 @@ internal static class UpdateChoice
                 choice = host.Ask("새 버전 v" + latestRaw + " 이 있습니다",
                     "지금 v" + cur + " 을 쓰고 있습니다." +
                     (pinned != null ? "\n(자동 업데이트 꺼짐 — 받기를 누르면 다시 켜집니다)" : "") + "\n\n" +
-                    "받기: 새 버전으로 업데이트\n이전 버전 받기: 목록에서 골라 받기 (받으면 자동 업데이트가 꺼집니다)\n나중에: 이번에는 지금 버전으로 실행",
+                    "받기: 새 버전으로 업데이트\n이전 버전 받기: 목록에서 골라 받기 (받으면 선택하신 버전으로 고정됩니다)\n나중에: 이번에는 지금 버전으로 실행",
                     new[] { "받기", "이전 버전 받기", "나중에" });
                 if (choice < 0) return (Kind.Update, null);
                 if (choice == 0)
@@ -100,7 +100,7 @@ internal static class UpdateChoice
             .Select(x => x.label + (installed != null && x.ver == installed ? "  (지금 실행 중)" : ""))
             .Append("취소").ToArray();
         int i = host.Ask("받을 버전을 고르세요",
-            "최신 버전에서 " + Step + "버전씩 내려간 " + Count + "개입니다.\n받으면 그 버전으로 고정되고 자동 업데이트가 꺼집니다. 지금 버전은 보관되어, 다시 고르면 되돌릴 수 있습니다.",
+            "최신 버전에서 " + Step + "버전씩 내려간 " + Count + "개입니다.\n받으면 선택하신 버전으로 고정됩니다. 지금 버전은 보관되어, 다시 고르면 되돌릴 수 있습니다.",
             buttons);
         return i >= 0 && i < shown.Count ? shown[i].tag : null;
     }
