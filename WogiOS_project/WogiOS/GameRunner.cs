@@ -198,6 +198,8 @@ internal static class GameRunner
         CapHook.Apply(Path.Combine(patched, "WarOfGenesis.dll"), Host.Log);
         // WogShim 에 없는 RichTextBox 를 쓰는 「내 리포트」 창 때문에 시작하자마자 죽는 문제를 막는다
         BugReportHook.Apply(Path.Combine(patched, "WarOfGenesis.dll"), Host.Log);
+        // 개발 > 패치 내역이 노트 전체(100여 판)를 줄바꿈하다 멈추는 문제 — 새 판 위주로 분량을 줄여 연다
+        NotesHook.Apply(Path.Combine(patched, "WarOfGenesis.dll"), Host.Log);
         // WogShim 에 없는 Windows 전용 호출(SetThreadExecutionState · GetDpiForWindow)을 0 을 돌려주는 빈 메서드로 바꾼다
         PInvokeStubHook.Apply(Path.Combine(patched, "WarOfGenesis.dll"), Host.Log);
         Directory.CreateDirectory(layout.SaveDir);
